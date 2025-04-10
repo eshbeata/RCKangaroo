@@ -821,9 +821,7 @@ __global__ void KernelGen(const TKparams Kparams)
     {
         u32 kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE) + group;
 
-        // Check if the kangaroo index is within the range specified by gEnd
-        if (kang_ind >= Kparams.KangCnt || kang_ind >= Kparams.gEnd)
-            continue;
+        // Removed gEnd check
 
         __align__(16) u64 x0[4], y0[4], d[3];
         __align__(16) u64 x[4], y[4];

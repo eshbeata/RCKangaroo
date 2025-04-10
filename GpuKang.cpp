@@ -55,7 +55,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	Kparams.KernelB_LDS_Size = 64 * JMP_CNT;
 	Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
 	Kparams.IsGenMode = gGenMode;
-	Kparams.gEnd = gEnd; // Initialize gEnd with the global gEnd value
+	// Removed gEnd initialization
 
 //allocate gpu mem
 	u64 size;

@@ -527,17 +527,7 @@ bool ParseCommandLine(int argc, char* argv[])
 				gGPUs_Mask[gpus[i] - '0'] = 1;
 			}
 		}
-		else if (strcmp(argument, "-end") == 0)
-		{
-			if (!gEnd.SetHexStr(argv[ci]))
-			{
-				printf("error: invalid value for -end option\r\n");
-				return false;
-			}
-			ci++;
-		}
-		else
-		if (strcmp(argument, "-dp") == 0)
+		else if (strcmp(argument, "-dp") == 0)
 		{
 			int val = atoi(argv[ci]);
 			ci++;
@@ -548,8 +538,7 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			gDP = val;
 		}
-		else
-		if (strcmp(argument, "-range") == 0)
+		else if (strcmp(argument, "-range") == 0)
 		{
 			int val = atoi(argv[ci]);
 			ci++;
@@ -560,8 +549,7 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			gRange = val;
 		}
-		else
-		if (strcmp(argument, "-start") == 0)
+		else if (strcmp(argument, "-start") == 0)
 		{	
 			if (!gStart.SetHexStr(argv[ci]))
 			{
@@ -571,8 +559,7 @@ bool ParseCommandLine(int argc, char* argv[])
 			ci++;
 			gStartSet = true;
 		}
-		else
-		if (strcmp(argument, "-pubkey") == 0)
+		else if (strcmp(argument, "-pubkey") == 0)
 		{
 			if (!gPubKey.SetHexStr(argv[ci]))
 			{
@@ -581,14 +568,12 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			ci++;
 		}
-		else
-		if (strcmp(argument, "-tames") == 0)
+		else if (strcmp(argument, "-tames") == 0)
 		{
 			strcpy(gTamesFileName, argv[ci]);
 			ci++;
 		}
-		else
-		if (strcmp(argument, "-max") == 0)
+		else if (strcmp(argument, "-max") == 0)
 		{
 			double val = atof(argv[ci]);
 			ci++;
