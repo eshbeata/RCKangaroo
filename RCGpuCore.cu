@@ -887,16 +887,16 @@ __global__ void KernelGen(const TKparams Kparams)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void CallGpuKernelABC(TKparams Kparams)
+void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream = 0)
 {
-	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size >>> (Kparams);
-	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size >>> (Kparams);
-	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size >>> (Kparams);
+	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size, stream >>> (Kparams);
+	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size, stream >>> (Kparams);
+	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size, stream >>> (Kparams);
 }
 
-void CallGpuKernelGen(TKparams Kparams)
+void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream = 0)
 {
-	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0 >> > (Kparams);
+	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0, stream >> > (Kparams);
 }
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)

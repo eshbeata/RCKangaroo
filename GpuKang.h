@@ -3,73 +3,79 @@
 // License: GPLv3, see "LICENSE.TXT" file
 // https://github.com/RetiredC
 
-
 #pragma once
 
+#include "defs.h"
 #include "Ec.h"
 
-#define STATS_WND_SIZE	16
-
-struct EcJMP
-{
-	EcPoint p;
-	EcInt dist;
-};
-
-//96bytes size
+#pragma pack(push, 1)
 struct TPointPriv
 {
-	u64 x[4];
-	u64 y[4];
-	u64 priv[4];
+	u64 x[8];
+	u64 y[8];
+	u64 priv[3];
 };
+#pragma pack(pop)
+
+#define STATS_WND_SIZE 16
 
 class RCGpuKang
 {
-private:
-	bool StopFlag;
-	EcPoint PntToSolve;
-	int Range; //in bits
-	int DP; //in bits
+public:
 	Ec ec;
+	RCGpuKang()
+	{
+		DPs_out = NULL;
+		RndPnts = NULL;
+	}
+	bool Prepare(EcPoint PntToSolve, int Range, int DP, EcJMP* EcJumps1, EcJMP* EcJumps2, EcJMP* EcJumps3);
+	void Execute();
+	void Stop();
+	void Release();
+	bool Start();
+	int GetStatsSpeed();
 
-	u32* DPs_out;
+public:
+	int CudaIndex;
+	bool IsOldGpu;
+	int mpCnt;	
+	size_t persistingL2CacheMaxSize;
+
+	// Memory optimization for RTX 5090
+	// Use these flags to control memory optimization features
+	bool useMemoryPools = true;  // Enable CUDA memory pools for faster allocations
+	bool useManagedMemory = true; // Use unified memory for some buffers
+	bool useStreamOrderMemOps = true; // Enable stream ordered memory operations
+	
 	TKparams Kparams;
-
+	u32* DPs_out;
+	TPointPriv* RndPnts;
+	int KangCnt;
+	EcPoint PntToSolve;
+	EcPoint PntA;
+	EcPoint PntB;
 	EcInt HalfRange;
 	EcPoint PntHalfRange;
 	EcPoint NegPntHalfRange;
-	TPointPriv* RndPnts;
+	EcPoint PntTame;
+	int Range;
+	int DP;
 	EcJMP* EcJumps1;
 	EcJMP* EcJumps2;
 	EcJMP* EcJumps3;
+	
+	u32 dbg[MD_LEN + 2];
 
-	EcPoint PntA;
-	EcPoint PntB;
-
-	int cur_stats_ind;
 	int SpeedStats[STATS_WND_SIZE];
+	int cur_stats_ind;
 
+	bool Failed;
+	bool StopFlag;
+
+private:
+	int CalcKangCnt();
 	void GenerateRndDistances();
-	bool Start();
-	void Release();
 #ifdef DEBUG_MODE
 	int Dbg_CheckKangs();
 #endif
-public:
-	int persistingL2CacheMaxSize;
-	int CudaIndex; //gpu index in cuda
-	int mpCnt;
-	int KangCnt;
-	bool Failed;
-	bool IsOldGpu;
-
-	int CalcKangCnt();
-	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);
-	void Stop();
-	void Execute();
-
-	u32 dbg[256];
-
-	int GetStatsSpeed();
 };

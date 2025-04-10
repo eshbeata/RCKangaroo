@@ -66,56 +66,109 @@ struct DBRec
 
 void InitGpus()
 {
-	GpuCnt = 0;
-	int gcnt = 0;
-	cudaGetDeviceCount(&gcnt);
-	if (gcnt > MAX_GPU_CNT)
-		gcnt = MAX_GPU_CNT;
+    GpuCnt = 0;
+    int gcnt = 0;
+    cudaGetDeviceCount(&gcnt);
+    if (gcnt > MAX_GPU_CNT)
+        gcnt = MAX_GPU_CNT;
 
-//	gcnt = 1; //dbg
-	if (!gcnt)
-		return;
+    if (!gcnt)
+        return;
 
-	int drv, rt;
-	cudaRuntimeGetVersion(&rt);
-	cudaDriverGetVersion(&drv);
-	char drvver[100];
-	sprintf(drvver, "%d.%d/%d.%d", drv / 1000, (drv % 100) / 10, rt / 1000, (rt % 100) / 10);
+    int drv, rt;
+    cudaRuntimeGetVersion(&rt);
+    cudaDriverGetVersion(&drv);
+    char drvver[100];
+    sprintf(drvver, "%d.%d/%d.%d", drv / 1000, (drv % 100) / 10, rt / 1000, (rt % 100) / 10);
 
-	printf("CUDA devices: %d, CUDA driver/runtime: %s\r\n", gcnt, drvver);
-	cudaError_t cudaStatus;
-	for (int i = 0; i < gcnt; i++)
-	{
-		cudaStatus = cudaSetDevice(i);
-		if (cudaStatus != cudaSuccess)
-		{
-			printf("cudaSetDevice for gpu %d failed!\r\n", i);
-			continue;
-		}
+    printf("CUDA devices: %d, CUDA driver/runtime: %s\r\n", gcnt, drvver);
+    cudaError_t cudaStatus;
+    for (int i = 0; i < gcnt; i++)
+    {
+        cudaStatus = cudaSetDevice(i);
+        if (cudaStatus != cudaSuccess)
+        {
+            printf("cudaSetDevice for gpu %d failed!\r\n", i);
+            continue;
+        }
 
-		if (!gGPUs_Mask[i])
-			continue;
+        if (!gGPUs_Mask[i])
+            continue;
 
-		cudaDeviceProp deviceProp;
-		cudaGetDeviceProperties(&deviceProp, i);
-		printf("GPU %d: %s, %.2f GB, %d CUs, cap %d.%d, PCI %d, L2 size: %d KB\r\n", i, deviceProp.name, ((float)(deviceProp.totalGlobalMem / (1024 * 1024))) / 1024.0f, deviceProp.multiProcessorCount, deviceProp.major, deviceProp.minor, deviceProp.pciBusID, deviceProp.l2CacheSize / 1024);
-		
-		if (deviceProp.major < 6)
-		{
-			printf("GPU %d - not supported, skip\r\n", i);
-			continue;
-		}
+        cudaDeviceProp deviceProp;
+        cudaGetDeviceProperties(&deviceProp, i);
+        printf("GPU %d: %s, %.2f GB, %d CUs, cap %d.%d, PCI %d, L2 size: %d KB\r\n", 
+               i, deviceProp.name, 
+               ((float)(deviceProp.totalGlobalMem / (1024 * 1024))) / 1024.0f, 
+               deviceProp.multiProcessorCount, 
+               deviceProp.major, deviceProp.minor, 
+               deviceProp.pciBusID, 
+               deviceProp.l2CacheSize / 1024);
+        
+        // Support for RTX 5090 and newer architectures
+        if (deviceProp.major < 6)
+        {
+            printf("GPU %d - not supported, skip\r\n", i);
+            continue;
+        }
 
-		cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+        // Optimize scheduling and thread configuration for RTX 5090
+        if (deviceProp.major >= 9) {
+            printf("RTX 5090 or newer detected - using optimized configuration\r\n");
+            
+            // Set optimized scheduling mode for the GPU
+            cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync | cudaDeviceMapHost);
+            
+            // Set optimal kernel launch configuration for compute capability 9.0+
+            cudaDeviceSetLimit(cudaLimitStackSize, 8192);
+            
+            // Enable asynchronous memory operations
+            cudaDeviceSetLimit(cudaLimitDevRuntimeSyncDepth, 16);
+            
+            // For RTX 5090, maximize occupancy
+            int maxThreadsPerBlock = deviceProp.maxThreadsPerBlock;
+            printf("RTX 5090: Maximum threads per block: %d\r\n", maxThreadsPerBlock);
+            
+            // Adjust P2P access for multi-GPU systems if needed
+            if (gcnt > 1) {
+                for (int j = 0; j < gcnt; j++) {
+                    if (i != j && gGPUs_Mask[j]) {
+                        int canAccessPeer = 0;
+                        cudaDeviceCanAccessPeer(&canAccessPeer, i, j);
+                        if (canAccessPeer) {
+                            cudaDeviceEnablePeerAccess(j, 0);
+                            printf("Enabled P2P access between GPU %d and GPU %d\r\n", i, j);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Old GPU scheduling
+            cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+        }
 
-		GpuKangs[GpuCnt] = new RCGpuKang();
-		GpuKangs[GpuCnt]->CudaIndex = i;
-		GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
-		GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
-		GpuKangs[GpuCnt]->IsOldGpu = deviceProp.l2CacheSize < 16 * 1024 * 1024;
-		GpuCnt++;
-	}
-	printf("Total GPUs for work: %d\r\n", GpuCnt);
+        GpuKangs[GpuCnt] = new RCGpuKang();
+        GpuKangs[GpuCnt]->CudaIndex = i;
+        GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
+        GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
+        
+        // RTX 5090 has large L2 cache, set IsOldGpu to false to use optimized settings
+        // For RTX 5090, L2 cache is well over 16MB threshold
+        GpuKangs[GpuCnt]->IsOldGpu = deviceProp.l2CacheSize < 16 * 1024 * 1024;
+        
+        if (deviceProp.major >= 9) {
+            // Force newer GPU mode for compute capability 9.0+
+            GpuKangs[GpuCnt]->IsOldGpu = false;
+            
+            // Set optimal memory configuration flags
+            GpuKangs[GpuCnt]->useMemoryPools = true;
+            GpuKangs[GpuCnt]->useManagedMemory = true;
+            GpuKangs[GpuCnt]->useStreamOrderMemOps = true;
+        }
+        
+        GpuCnt++;
+    }
+    printf("Total GPUs for work: %d\r\n", GpuCnt);
 }
 #ifdef _WIN32
 u32 __stdcall kang_thr_proc(void* data)

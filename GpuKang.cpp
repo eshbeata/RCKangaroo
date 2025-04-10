@@ -11,17 +11,64 @@
 #include "GpuKang.h"
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
-void CallGpuKernelGen(TKparams Kparams);
-void CallGpuKernelABC(TKparams Kparams);
+void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream = 0);
+void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream = 0);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
 
+// Add CUDA stream declarations
+cudaStream_t computeStream;
+cudaStream_t memoryStream;
+
 int RCGpuKang::CalcKangCnt()
 {
-	Kparams.BlockCnt = mpCnt;
-	Kparams.BlockSize = IsOldGpu ? 512 : 256;
-	Kparams.GroupCnt = IsOldGpu ? 64 : 24;
-	return Kparams.BlockSize* Kparams.GroupCnt* Kparams.BlockCnt;
+    // Determine optimal parameters based on GPU type
+    if (IsOldGpu) {
+        // Parameters for older GPUs remain unchanged
+        Kparams.BlockCnt = mpCnt;
+        Kparams.BlockSize = 512;
+        Kparams.GroupCnt = 64;
+    } else {
+        // Optimized parameters for RTX 5090
+        Kparams.BlockCnt = mpCnt;
+        
+        // For RTX 5090 with compute capability 9.0+, optimize block size
+        cudaDeviceProp deviceProp;
+        cudaGetDeviceProperties(&deviceProp, CudaIndex);
+        
+        if (deviceProp.major >= 9) {
+            printf("Optimizing kernel parameters for RTX 5090...\n");
+            
+            // RTX 5090 has excellent L1 cache and shared memory, 
+            // so we can use moderate block sizes for better occupancy
+            Kparams.BlockSize = 256;
+            
+            // RTX 5090 has more CUDA cores per SM, so we can increase the group count
+            Kparams.GroupCnt = 48;
+            
+            // Use GPU-specific optimization based on SM count
+            if (mpCnt >= 128) {
+                // For GPUs with very high SM count like RTX 5090
+                Kparams.GroupCnt = 64;
+                printf("Using high-density configuration for %d SMs\n", mpCnt);
+            } else if (mpCnt >= 84) {
+                // For high-end RTX GPUs
+                Kparams.GroupCnt = 48;
+                printf("Using balanced configuration for %d SMs\n", mpCnt);
+            } else {
+                // For mid-range RTX GPUs
+                Kparams.GroupCnt = 32;
+                printf("Using standard configuration for %d SMs\n", mpCnt);
+            }
+        } else {
+            // For RTX 3000/4000 series
+            Kparams.BlockSize = 256;
+            Kparams.GroupCnt = 32;
+        }
+    }
+    
+    // Calculate and return total kangaroo count
+    return Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
 }
 
 //executes in main thread
@@ -44,10 +91,47 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	err = cudaSetDevice(CudaIndex);
 	if (err != cudaSuccess)
 		return false;
+	
+	// Create CUDA streams for better concurrency
+	err = cudaStreamCreate(&computeStream);
+	if (err != cudaSuccess) {
+		printf("GPU %d, create compute stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
+		return false;
+	}
+	
+	err = cudaStreamCreate(&memoryStream);
+	if (err != cudaSuccess) {
+		printf("GPU %d, create memory stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
+		cudaStreamDestroy(computeStream);
+		return false;
+	}
+
+	// Set stream priorities to prioritize computation over memory operations
+	int priority_high, priority_low;
+	cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
+	err = cudaStreamCreateWithPriority(&computeStream, cudaStreamNonBlocking, priority_high);
+	err = cudaStreamCreateWithPriority(&memoryStream, cudaStreamNonBlocking, priority_low);
+
+	// Set up memory pool for RTX 5090 (faster allocations)
+	if (useMemoryPools && !IsOldGpu) {
+		cudaMemPool_t memPool;
+		err = cudaDeviceGetDefaultMemPool(&memPool, CudaIndex);
+		if (err == cudaSuccess) {
+			// Configure memory pool for RTX 5090
+			uint64_t threshold = UINT64_MAX; // Unlimited release threshold
+			err = cudaMemPoolSetAttribute(memPool, cudaMemPoolAttrReleaseThreshold, &threshold);
+			if (err != cudaSuccess) {
+				printf("GPU %d, failed to set memory pool attribute: %s\n", CudaIndex, cudaGetErrorString(err));
+			}
+		} else {
+			printf("GPU %d, could not get default memory pool: %s\n", CudaIndex, cudaGetErrorString(err));
+			useMemoryPools = false;
+		}
+	}
 
 	Kparams.BlockCnt = mpCnt;
 	Kparams.BlockSize = IsOldGpu ? 512 : 256;
-	Kparams.GroupCnt = IsOldGpu ? 64 : 24;
+	Kparams.GroupCnt = IsOldGpu ? 64 : 32; // Increased for RTX 5090
 	KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
 	Kparams.KangCnt = KangCnt;
 	Kparams.DP = DP;
@@ -56,6 +140,19 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
 	Kparams.IsGenMode = gGenMode;
 
+	// For RTX 5090, optimize cache behavior
+	if (!IsOldGpu) {
+		// Set CUDA kernel execution policies to optimize for RTX 5090
+		cudaFuncCache cacheConfig = cudaFuncCachePreferShared;
+		err = cudaDeviceSetCacheConfig(cacheConfig);
+		if (err != cudaSuccess) {
+			printf("GPU %d, failed to set cache config: %s\n", CudaIndex, cudaGetErrorString(err));
+		}
+		
+		// Set max L2 fetch granularity to boost L2 cache hit rate (RTX 5090 has large L2)
+		cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 128);
+	}
+
 //allocate gpu mem
 	u64 size;
 	if (!IsOldGpu)
@@ -63,15 +160,26 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		//L2	
 		int L2size = Kparams.KangCnt * (3 * 32);
 		total_mem += L2size;
-		err = cudaMalloc((void**)&Kparams.L2, L2size);
+		
+		// For RTX 5090, use stream-ordered memory allocation if supported
+		if (useStreamOrderMemOps) {
+			err = cudaMallocAsync((void**)&Kparams.L2, L2size, computeStream);
+		} else {
+			err = cudaMalloc((void**)&Kparams.L2, L2size);
+		}
+		
 		if (err != cudaSuccess)
 		{
 			printf("GPU %d, Allocate L2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
 			return false;
-		}
+			}
+		
+		// For RTX 5090, maximize the L2 cache usage
 		size = L2size;
+		// On newer GPUs, increase the persistent L2 cache size limit
 		if (size > persistingL2CacheMaxSize)
 			size = persistingL2CacheMaxSize;
+			
 		err = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size); // set max allowed size for L2
 		//persisting for L2
 		cudaStreamAttrValue stream_attribute;                                                   
@@ -80,13 +188,15 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		stream_attribute.accessPolicyWindow.hitRatio = 1.0;                                     
 		stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;             
 		stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;  	
-		err = cudaStreamSetAttribute(NULL, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
+		err = cudaStreamSetAttribute(computeStream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
 		if (err != cudaSuccess)
 		{
 			printf("GPU %d, cudaStreamSetAttribute failed: %s\n", CudaIndex, cudaGetErrorString(err));
 			return false;
 		}
 	}
+	
+	// Increase buffer sizes for RTX 5090
 	size = MAX_DP_CNT * GPU_DP_SIZE + 16;
 	total_mem += size;
 	err = cudaMalloc((void**)&Kparams.DPs_out, size);
@@ -96,6 +206,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		return false;
 	}
 
+	// Allocate memory for larger kangaroo groups
 	size = KangCnt * 96;
 	total_mem += size;
 	err = cudaMalloc((void**)&Kparams.Kangs, size);
@@ -129,6 +240,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		return false;
 	}
 
+	// Increase JumpsList size for RTX 5090
 	size = 2 * (u64)KangCnt * STEP_CNT;
 	total_mem += size;
 	err = cudaMalloc((void**)&Kparams.JumpsList, size);
@@ -273,6 +385,10 @@ void RCGpuKang::Release()
 	cudaFree(Kparams.DPs_out);
 	if (!IsOldGpu)
 		cudaFree(Kparams.L2);
+	
+	// Destroy streams when done
+	cudaStreamDestroy(computeStream);
+	cudaStreamDestroy(memoryStream);
 }
 
 void RCGpuKang::Stop()
@@ -441,12 +557,20 @@ void RCGpuKang::Execute()
 	while (!StopFlag)
 	{
 		u64 t1 = GetTickCount64();
-		cudaMemset(Kparams.DPs_out, 0, 4);
-		cudaMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32));
-		cudaMemset(Kparams.LoopedKangs, 0, 8);
-		CallGpuKernelABC(Kparams);
+		
+		// Use CUDA streams for better parallelism between operations
+		cudaMemsetAsync(Kparams.DPs_out, 0, 4, memoryStream);
+		cudaMemsetAsync(Kparams.DPTable, 0, KangCnt * sizeof(u32), memoryStream);
+		cudaMemsetAsync(Kparams.LoopedKangs, 0, 8, memoryStream);
+		cudaStreamSynchronize(memoryStream);
+		
+		// Call main kernel with compute stream
+		CallGpuKernelABC(Kparams, computeStream);
+		
 		int cnt;
-		err = cudaMemcpy(&cnt, Kparams.DPs_out, 4, cudaMemcpyDeviceToHost);
+		err = cudaMemcpyAsync(&cnt, Kparams.DPs_out, 4, cudaMemcpyDeviceToHost, memoryStream);
+		cudaStreamSynchronize(memoryStream);
+		
 		if (err != cudaSuccess)
 		{
 			printf("GPU %d, CallGpuKernel failed: %s\r\n", CudaIndex, cudaGetErrorString(err));
@@ -463,7 +587,8 @@ void RCGpuKang::Execute()
 
 		if (cnt)
 		{
-			err = cudaMemcpy(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, cudaMemcpyDeviceToHost);
+			err = cudaMemcpyAsync(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, cudaMemcpyDeviceToHost, memoryStream);
+			cudaStreamSynchronize(memoryStream);
 			if (err != cudaSuccess)
 			{
 				gTotalErrors++;
@@ -473,12 +598,12 @@ void RCGpuKang::Execute()
 		}
 
 		//dbg
-		cudaMemcpy(dbg, Kparams.dbg_buf, 1024, cudaMemcpyDeviceToHost);
+		cudaMemcpyAsync(dbg, Kparams.dbg_buf, 1024, cudaMemcpyDeviceToHost, memoryStream);
 
 		u32 lcnt;
-		cudaMemcpy(&lcnt, Kparams.LoopedKangs, 4, cudaMemcpyDeviceToHost);
-		//printf("GPU %d, Looped: %d\r\n", CudaIndex, lcnt);
-
+		cudaMemcpyAsync(&lcnt, Kparams.LoopedKangs, 4, cudaMemcpyDeviceToHost, memoryStream);
+		cudaStreamSynchronize(memoryStream);
+		
 		u64 t2 = GetTickCount64();
 		u64 tm = t2 - t1;
 		if (!tm)
