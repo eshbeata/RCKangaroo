@@ -31,6 +31,11 @@ extern __shared__ u64 LDS[];
 extern "C" __launch_bounds__(BLOCK_SIZE, 1)
 __global__ void KernelA(const TKparams Kparams)
 {
+    // Debug message to confirm kernel start
+    if (THREAD_X == 0 && BLOCK_X == 0) {
+        printf("KernelA started\n");
+    }
+
 	u64* L2x = Kparams.L2 + 2 * THREAD_X + 4 * BLOCK_SIZE * BLOCK_X;
 	u64* L2y = L2x + 4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE;
 	u64* L2s = L2y + 4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE;
@@ -208,6 +213,11 @@ __global__ void KernelA(const TKparams Kparams)
 		Kparams.Kangs[(kang_ind + group) * 12 + 6] = tmp[2];
 		Kparams.Kangs[(kang_ind + group) * 12 + 7] = tmp[3];
 	}
+
+    // Debug message to confirm kernel end
+    if (THREAD_X == 0 && BLOCK_X == 0) {
+        printf("KernelA finished\n");
+    }
 } 
 
 #else
