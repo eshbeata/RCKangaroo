@@ -166,6 +166,9 @@ __global__ void KernelA(const TKparams Kparams)
 				int4* dst = (int4*)(Kparams.DPTable + Kparams.KangCnt + (kang_ind * DPTABLE_MAX_CNT + ind) * 4);
 				dst[0] = ((int4*)x)[0];
 				jmp_ind |= DP_FLAG;
+
+				// Debugging output
+				printf("DP generated: kang_ind=%u, ind=%u, x[3]=%llu\n", kang_ind, ind, x[3]);
 			}
 
 			lds_jlist[8 * THREAD_X + (group % 8)] = jmp_ind;
