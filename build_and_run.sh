@@ -187,26 +187,23 @@ run_rckangaroo() {
         exit 1
     fi
     
+    # Make sure the log file is empty before starting
+    > rckangaroo.log
+    
     if [ $# -eq 0 ]; then
         print_warning "No parameters provided. Running in benchmark mode."
-        ./rckangaroo > rckangaroo.log &
-        RCPID=$!
-        echo "RCKangaroo is running in background (PID: $RCPID). Output is being saved to rckangaroo.log"
+        print_warning "Running RCKangaroo in foreground for easier debugging. Press Ctrl+C to stop."
+        print_warning "Output is being saved to rckangaroo.log"
+        
+        # Run in foreground with output displayed and also saved to log
+        ./rckangaroo 2>&1 | tee rckangaroo.log
     else
         print_warning "Running with provided parameters: $@"
-        ./rckangaroo "$@" > rckangaroo.log &
-        RCPID=$!
-        echo "RCKangaroo is running in background (PID: $RCPID). Output is being saved to rckangaroo.log"
-    fi
-    
-    # Start the monitoring script if available
-    if [ -x ./monitor_and_tune.sh ]; then
-        sleep 2 # Give RCKangaroo a moment to start
-        print_warning "Starting performance monitoring..."
-        ./monitor_and_tune.sh
-    else
-        print_warning "monitor_and_tune.sh not found or not executable. Run 'chmod +x monitor_and_tune.sh' first."
-        print_warning "You can monitor output with: tail -f rckangaroo.log"
+        print_warning "Running RCKangaroo in foreground for easier debugging. Press Ctrl+C to stop."
+        print_warning "Output is being saved to rckangaroo.log"
+        
+        # Run in foreground with output displayed and also saved to log
+        ./rckangaroo "$@" 2>&1 | tee rckangaroo.log
     fi
 }
 

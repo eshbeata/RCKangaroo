@@ -19,6 +19,10 @@ struct TPointPriv
 
 #define STATS_WND_SIZE 16
 
+// CUDA stream declarations
+extern cudaStream_t computeStream;
+extern cudaStream_t memoryStream;
+
 class RCGpuKang
 {
 public:

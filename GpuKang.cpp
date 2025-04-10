@@ -74,297 +74,410 @@ int RCGpuKang::CalcKangCnt()
 //executes in main thread
 bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3)
 {
-	PntToSolve = _PntToSolve;
-	Range = _Range;
-	DP = _DP;
-	EcJumps1 = _EcJumps1;
-	EcJumps2 = _EcJumps2;
-	EcJumps3 = _EcJumps3;
-	StopFlag = false;
-	Failed = false;
-	u64 total_mem = 0;
-	memset(dbg, 0, sizeof(dbg));
-	memset(SpeedStats, 0, sizeof(SpeedStats));
-	cur_stats_ind = 0;
+    PntToSolve = _PntToSolve;
+    Range = _Range;
+    DP = _DP;
+    EcJumps1 = _EcJumps1;
+    EcJumps2 = _EcJumps2;
+    EcJumps3 = _EcJumps3;
+    StopFlag = false;
+    Failed = false;
+    u64 total_mem = 0;
+    memset(dbg, 0, sizeof(dbg));
+    memset(SpeedStats, 0, sizeof(SpeedStats));
+    cur_stats_ind = 0;
 
-	cudaError_t err;
-	err = cudaSetDevice(CudaIndex);
-	if (err != cudaSuccess)
-		return false;
-	
-	// Create CUDA streams for better concurrency
-	err = cudaStreamCreate(&computeStream);
-	if (err != cudaSuccess) {
-		printf("GPU %d, create compute stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
-	
-	err = cudaStreamCreate(&memoryStream);
-	if (err != cudaSuccess) {
-		printf("GPU %d, create memory stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		cudaStreamDestroy(computeStream);
-		return false;
-	}
+    cudaError_t err;
+    err = cudaSetDevice(CudaIndex);
+    if (err != cudaSuccess)
+        return false;
+    
+    // Create CUDA streams for better concurrency
+    err = cudaStreamCreate(&computeStream);
+    if (err != cudaSuccess) {
+        printf("GPU %d, create compute stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
+    
+    err = cudaStreamCreate(&memoryStream);
+    if (err != cudaSuccess) {
+        printf("GPU %d, create memory stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        cudaStreamDestroy(computeStream);
+        return false;
+    }
 
-	// Set stream priorities to prioritize computation over memory operations
-	int priority_high, priority_low;
-	cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
-	err = cudaStreamCreateWithPriority(&computeStream, cudaStreamNonBlocking, priority_high);
-	err = cudaStreamCreateWithPriority(&memoryStream, cudaStreamNonBlocking, priority_low);
+    // Set stream priorities with error checking
+    int priority_high, priority_low;
+    err = cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
+    if (err != cudaSuccess) {
+        printf("Warning: Could not get stream priority range: %s\n", cudaGetErrorString(err));
+        // Continue anyway with default priorities
+    } else {
+        cudaStream_t temp_stream;
+        err = cudaStreamCreateWithPriority(&temp_stream, cudaStreamNonBlocking, priority_high);
+        if (err == cudaSuccess) {
+            cudaStreamDestroy(computeStream);
+            computeStream = temp_stream;
+        } else {
+            printf("Warning: Failed to set compute stream priority: %s\n", cudaGetErrorString(err));
+        }
+        
+        err = cudaStreamCreateWithPriority(&temp_stream, cudaStreamNonBlocking, priority_low);
+        if (err == cudaSuccess) {
+            cudaStreamDestroy(memoryStream);
+            memoryStream = temp_stream;
+        } else {
+            printf("Warning: Failed to set memory stream priority: %s\n", cudaGetErrorString(err));
+        }
+    }
 
-	// Set up memory pool for RTX 5090 (faster allocations)
-	if (useMemoryPools && !IsOldGpu) {
-		cudaMemPool_t memPool;
-		err = cudaDeviceGetDefaultMemPool(&memPool, CudaIndex);
-		if (err == cudaSuccess) {
-			// Configure memory pool for RTX 5090
-			uint64_t threshold = UINT64_MAX; // Unlimited release threshold
-			err = cudaMemPoolSetAttribute(memPool, cudaMemPoolAttrReleaseThreshold, &threshold);
-			if (err != cudaSuccess) {
-				printf("GPU %d, failed to set memory pool attribute: %s\n", CudaIndex, cudaGetErrorString(err));
-			}
-		} else {
-			printf("GPU %d, could not get default memory pool: %s\n", CudaIndex, cudaGetErrorString(err));
-			useMemoryPools = false;
-		}
-	}
+    // Set up memory pool for RTX 5090 with error checking
+    if (useMemoryPools && !IsOldGpu) {
+        cudaMemPool_t memPool;
+        err = cudaDeviceGetDefaultMemPool(&memPool, CudaIndex);
+        if (err == cudaSuccess) {
+            // Configure memory pool with error checking
+            uint64_t threshold = UINT64_MAX;
+            err = cudaMemPoolSetAttribute(memPool, cudaMemPoolAttrReleaseThreshold, &threshold);
+            if (err != cudaSuccess) {
+                printf("GPU %d, failed to set memory pool attribute: %s\n", CudaIndex, cudaGetErrorString(err));
+                // Continue anyway, not critical
+            }
+        } else {
+            printf("GPU %d, could not get default memory pool: %s\n", CudaIndex, cudaGetErrorString(err));
+            useMemoryPools = false;
+        }
+    }
 
-	Kparams.BlockCnt = mpCnt;
-	Kparams.BlockSize = IsOldGpu ? 512 : 256;
-	Kparams.GroupCnt = IsOldGpu ? 64 : 32; // Increased for RTX 5090
-	KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
-	Kparams.KangCnt = KangCnt;
-	Kparams.DP = DP;
-	Kparams.KernelA_LDS_Size = 64 * JMP_CNT + 16 * Kparams.BlockSize;
-	Kparams.KernelB_LDS_Size = 64 * JMP_CNT;
-	Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
-	Kparams.IsGenMode = gGenMode;
+    // First calculate and validate kangaroo counts to avoid overflow
+    Kparams.BlockCnt = mpCnt;
+    
+    // For RTX 5090, we need to limit the BlockSize and GroupCnt to reasonable values
+    // to prevent excessive memory allocation
+    int maxBlockSize = IsOldGpu ? 512 : 256;
+    int maxGroupCnt = 64;  // Limiting to a reasonable maximum to prevent segfault
+    
+    if (!IsOldGpu) {
+        cudaDeviceProp deviceProp;
+        if (cudaGetDeviceProperties(&deviceProp, CudaIndex) == cudaSuccess) {
+            // Limit kangaroo count for very large GPUs
+            if (deviceProp.major >= 9) {
+                printf("Setting conservative parameters for RTX 5090 to avoid memory issues...\n");
+                if (mpCnt > 100) {
+                    // Reduce BlockCnt for very large SM counts
+                    Kparams.BlockCnt = 100;
+                    printf("Limiting BlockCnt to %d (from %d SMs) to prevent excessive memory usage\n", 
+                           Kparams.BlockCnt, mpCnt);
+                }
+                
+                // Use balanced values for 5090
+                maxBlockSize = 256;
+                maxGroupCnt = 32;
+            }
+        }
+    }
+    
+    Kparams.BlockSize = IsOldGpu ? 512 : maxBlockSize;
+    Kparams.GroupCnt = IsOldGpu ? 64 : maxGroupCnt;
+    
+    // Calculate safe kangaroo count
+    KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
+    
+    // Safety check - if kangaroo count is too large, reduce it to a safe value
+    const u64 MAX_SAFE_KANG_CNT = 4000000; // Limit to avoid segfault
+    if (KangCnt > MAX_SAFE_KANG_CNT) {
+        printf("Warning: Reducing kangaroo count from %d to %llu to prevent memory issues\n", 
+               KangCnt, MAX_SAFE_KANG_CNT);
+        KangCnt = MAX_SAFE_KANG_CNT;
+        
+        // Recalculate parameters to match the reduced KangCnt
+        Kparams.GroupCnt = static_cast<u32>(KangCnt / (Kparams.BlockSize * Kparams.BlockCnt));
+        if (Kparams.GroupCnt < 8) {
+            Kparams.GroupCnt = 8;
+            Kparams.BlockCnt = static_cast<u32>(KangCnt / (Kparams.BlockSize * Kparams.GroupCnt));
+        }
+    }
+    
+    Kparams.KangCnt = KangCnt;
+    Kparams.DP = DP;
+    Kparams.KernelA_LDS_Size = 64 * JMP_CNT + 16 * Kparams.BlockSize;
+    Kparams.KernelB_LDS_Size = 64 * JMP_CNT;
+    Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
+    Kparams.IsGenMode = gGenMode;
 
-	// For RTX 5090, optimize cache behavior
-	if (!IsOldGpu) {
-		// Set CUDA kernel execution policies to optimize for RTX 5090
-		cudaFuncCache cacheConfig = cudaFuncCachePreferShared;
-		err = cudaDeviceSetCacheConfig(cacheConfig);
-		if (err != cudaSuccess) {
-			printf("GPU %d, failed to set cache config: %s\n", CudaIndex, cudaGetErrorString(err));
-		}
-		
-		// Set max L2 fetch granularity to boost L2 cache hit rate (RTX 5090 has large L2)
-		cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 128);
-	}
+    // For RTX 5090, optimize cache behavior
+    if (!IsOldGpu) {
+        // Set CUDA kernel execution policies for better performance
+        cudaFuncCache cacheConfig = cudaFuncCachePreferShared;
+        err = cudaDeviceSetCacheConfig(cacheConfig);
+        if (err != cudaSuccess) {
+            printf("GPU %d, failed to set cache config: %s\n", CudaIndex, cudaGetErrorString(err));
+            // Continue anyway, not critical
+        }
+        
+        // Increase L2 fetch granularity with error checking
+        err = cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 128);
+        if (err != cudaSuccess) {
+            printf("Warning: Could not set L2 fetch granularity: %s\n", cudaGetErrorString(err));
+            // Continue anyway, not critical
+        }
+    }
 
-//allocate gpu mem
-	u64 size;
-	if (!IsOldGpu)
-	{
-		//L2	
-		int L2size = Kparams.KangCnt * (3 * 32);
-		total_mem += L2size;
-		
-		// For RTX 5090, use stream-ordered memory allocation if supported
-		if (useStreamOrderMemOps) {
-			err = cudaMallocAsync((void**)&Kparams.L2, L2size, computeStream);
-		} else {
-			err = cudaMalloc((void**)&Kparams.L2, L2size);
-		}
-		
-		if (err != cudaSuccess)
-		{
-			printf("GPU %d, Allocate L2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-			return false;
-			}
-		
-		// For RTX 5090, maximize the L2 cache usage
-		size = L2size;
-		// On newer GPUs, increase the persistent L2 cache size limit
-		if (size > persistingL2CacheMaxSize)
-			size = persistingL2CacheMaxSize;
-			
-		err = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size); // set max allowed size for L2
-		//persisting for L2
-		cudaStreamAttrValue stream_attribute;                                                   
-		stream_attribute.accessPolicyWindow.base_ptr = Kparams.L2;
-		stream_attribute.accessPolicyWindow.num_bytes = size;										
-		stream_attribute.accessPolicyWindow.hitRatio = 1.0;                                     
-		stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;             
-		stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;  	
-		err = cudaStreamSetAttribute(computeStream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
-		if (err != cudaSuccess)
-		{
-			printf("GPU %d, cudaStreamSetAttribute failed: %s\n", CudaIndex, cudaGetErrorString(err));
-			return false;
-		}
-	}
-	
-	// Increase buffer sizes for RTX 5090
-	size = MAX_DP_CNT * GPU_DP_SIZE + 16;
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.DPs_out, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate GpuOut memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    // Rest of the function stays mostly the same but with better error checking
 
-	// Allocate memory for larger kangaroo groups
-	size = KangCnt * 96;
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.Kangs, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate pKangs memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    // ... rest of the memory allocation code ...
+    
+    //allocate gpu mem
+    u64 size;
+    if (!IsOldGpu)
+    {
+        //L2	
+        int L2size = Kparams.KangCnt * (3 * 32);
+        total_mem += L2size;
+        
+        // For RTX 5090, use stream-ordered memory allocation if supported
+        if (useStreamOrderMemOps) {
+            err = cudaMallocAsync((void**)&Kparams.L2, L2size, computeStream);
+            if (err != cudaSuccess) {
+                printf("GPU %d, Async allocation failed, falling back to standard malloc: %s\n", CudaIndex, cudaGetErrorString(err));
+                err = cudaMalloc((void**)&Kparams.L2, L2size);
+            }
+        } else {
+            err = cudaMalloc((void**)&Kparams.L2, L2size);
+        }
+        
+        if (err != cudaSuccess)
+        {
+            printf("GPU %d, Allocate L2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+            return false;
+            }
+        
+        // For RTX 5090, maximize the L2 cache usage
+        size = L2size;
+        // On newer GPUs, increase the persistent L2 cache size limit
+        if (size > persistingL2CacheMaxSize)
+            size = persistingL2CacheMaxSize;
+            
+        err = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size); // set max allowed size for L2
+        if (err != cudaSuccess) {
+            printf("Warning: Could not set L2 cache size limit: %s\n", cudaGetErrorString(err));
+            // Continue anyway, not critical
+        }
+        
+        //persisting for L2
+        cudaStreamAttrValue stream_attribute;                                                   
+        stream_attribute.accessPolicyWindow.base_ptr = Kparams.L2;
+        stream_attribute.accessPolicyWindow.num_bytes = size;										
+        stream_attribute.accessPolicyWindow.hitRatio = 1.0;                                     
+        stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;             
+        stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;  	
+        err = cudaStreamSetAttribute(computeStream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
+        if (err != cudaSuccess)
+        {
+            printf("GPU %d, cudaStreamSetAttribute failed (non-critical): %s\n", CudaIndex, cudaGetErrorString(err));
+            // Continue anyway, not critical
+        }
+    }
+    
+    // Increase buffer sizes for RTX 5090
+    size = MAX_DP_CNT * GPU_DP_SIZE + 16;
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.DPs_out, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate GpuOut memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	total_mem += JMP_CNT * 96;
-	err = cudaMalloc((void**)&Kparams.Jumps1, JMP_CNT * 96);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate Jumps1 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    // Allocate memory for larger kangaroo groups
+    size = KangCnt * 96;
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.Kangs, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate pKangs memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	total_mem += JMP_CNT * 96;
-	err = cudaMalloc((void**)&Kparams.Jumps2, JMP_CNT * 96);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate Jumps1 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    total_mem += JMP_CNT * 96;
+    err = cudaMalloc((void**)&Kparams.Jumps1, JMP_CNT * 96);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate Jumps1 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	total_mem += JMP_CNT * 96;
-	err = cudaMalloc((void**)&Kparams.Jumps3, JMP_CNT * 96);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate Jumps3 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    total_mem += JMP_CNT * 96;
+    err = cudaMalloc((void**)&Kparams.Jumps2, JMP_CNT * 96);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate Jumps1 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	// Increase JumpsList size for RTX 5090
-	size = 2 * (u64)KangCnt * STEP_CNT;
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.JumpsList, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate JumpsList memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    total_mem += JMP_CNT * 96;
+    err = cudaMalloc((void**)&Kparams.Jumps3, JMP_CNT * 96);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate Jumps3 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	size = (u64)KangCnt * (16 * DPTABLE_MAX_CNT + sizeof(u32)); //we store 16bytes of X
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.DPTable, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate DPTable memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    // Increase JumpsList size for RTX 5090
+    size = 2 * (u64)KangCnt * STEP_CNT;
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.JumpsList, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate JumpsList memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	size = mpCnt * Kparams.BlockSize * sizeof(u64);
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.L1S2, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate L1S2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    size = (u64)KangCnt * (16 * DPTABLE_MAX_CNT + sizeof(u32)); //we store 16bytes of X
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.DPTable, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate DPTable memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	size = (u64)KangCnt * MD_LEN * (2 * 32);
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.LastPnts, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate LastPnts memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    size = mpCnt * Kparams.BlockSize * sizeof(u64);
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.L1S2, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate L1S2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	size = (u64)KangCnt * MD_LEN * sizeof(u64);
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.LoopTable, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate LastPnts memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    size = (u64)KangCnt * MD_LEN * (2 * 32);
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.LastPnts, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate LastPnts memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	total_mem += 1024;
-	err = cudaMalloc((void**)&Kparams.dbg_buf, 1024);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate dbg_buf memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    size = (u64)KangCnt * MD_LEN * sizeof(u64);
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.LoopTable, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate LastPnts memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	size = sizeof(u32) * KangCnt + 8;
-	total_mem += size;
-	err = cudaMalloc((void**)&Kparams.LoopedKangs, size);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d Allocate LoopedKangs memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
+    total_mem += 1024;
+    err = cudaMalloc((void**)&Kparams.dbg_buf, 1024);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate dbg_buf memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
 
-	DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
+    size = sizeof(u32) * KangCnt + 8;
+    total_mem += size;
+    err = cudaMalloc((void**)&Kparams.LoopedKangs, size);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d Allocate LoopedKangs memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
+
+    // Allocate host memory with error checking
+    DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
+    if (DPs_out == NULL) {
+        printf("Failed to allocate host memory for DPs_out\n");
+        return false;
+    }
 
 //jmp1
-	u64* buf = (u64*)malloc(JMP_CNT * 96);
-	for (int i = 0; i < JMP_CNT; i++)
-	{
-		memcpy(buf + i * 12, EcJumps1[i].p.x.data, 32);
-		memcpy(buf + i * 12 + 4, EcJumps1[i].p.y.data, 32);
-		memcpy(buf + i * 12 + 8, EcJumps1[i].dist.data, 32);
-	}
-	err = cudaMemcpy(Kparams.Jumps1, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d, cudaMemcpy Jumps1 failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
-	free(buf);
+    u64* buf = (u64*)malloc(JMP_CNT * 96);
+    if (buf == NULL) {
+        printf("Failed to allocate memory for jumps buffer\n");
+        return false;
+    }
+    
+    for (int i = 0; i < JMP_CNT; i++)
+    {
+        memcpy(buf + i * 12, EcJumps1[i].p.x.data, 32);
+        memcpy(buf + i * 12 + 4, EcJumps1[i].p.y.data, 32);
+        memcpy(buf + i * 12 + 8, EcJumps1[i].dist.data, 32);
+    }
+    err = cudaMemcpy(Kparams.Jumps1, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d, cudaMemcpy Jumps1 failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        free(buf);
+        return false;
+    }
+    free(buf);
 //jmp2
-	buf = (u64*)malloc(JMP_CNT * 96);
-	u64* jmp2_table = (u64*)malloc(JMP_CNT * 64);
-	for (int i = 0; i < JMP_CNT; i++)
-	{
-		memcpy(buf + i * 12, EcJumps2[i].p.x.data, 32);
-		memcpy(jmp2_table + i * 8, EcJumps2[i].p.x.data, 32);
-		memcpy(buf + i * 12 + 4, EcJumps2[i].p.y.data, 32);
-		memcpy(jmp2_table + i * 8 + 4, EcJumps2[i].p.y.data, 32);
-		memcpy(buf + i * 12 + 8, EcJumps2[i].dist.data, 32);
-	}
-	err = cudaMemcpy(Kparams.Jumps2, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d, cudaMemcpy Jumps2 failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
-	free(buf);
+    buf = (u64*)malloc(JMP_CNT * 96);
+    if (buf == NULL) {
+        printf("Failed to allocate memory for jumps buffer\n");
+        return false;
+    }
+    
+    u64* jmp2_table = (u64*)malloc(JMP_CNT * 64);
+    if (jmp2_table == NULL) {
+        printf("Failed to allocate memory for jmp2_table\n");
+        free(buf);
+        return false;
+    }
+    
+    for (int i = 0; i < JMP_CNT; i++)
+    {
+        memcpy(buf + i * 12, EcJumps2[i].p.x.data, 32);
+        memcpy(jmp2_table + i * 8, EcJumps2[i].p.x.data, 32);
+        memcpy(buf + i * 12 + 4, EcJumps2[i].p.y.data, 32);
+        memcpy(jmp2_table + i * 8 + 4, EcJumps2[i].p.y.data, 32);
+        memcpy(buf + i * 12 + 8, EcJumps2[i].dist.data, 32);
+    }
+    err = cudaMemcpy(Kparams.Jumps2, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d, cudaMemcpy Jumps2 failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        free(buf);
+        free(jmp2_table);
+        return false;
+    }
+    free(buf);
 
-	err = cuSetGpuParams(Kparams, jmp2_table);
-	if (err != cudaSuccess)
-	{
-		free(jmp2_table);
-		printf("GPU %d, cuSetGpuParams failed: %s!\r\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
-	free(jmp2_table);
+    err = cuSetGpuParams(Kparams, jmp2_table);
+    if (err != cudaSuccess)
+    {
+        free(jmp2_table);
+        printf("GPU %d, cuSetGpuParams failed: %s!\r\n", CudaIndex, cudaGetErrorString(err));
+        return false;
+    }
+    free(jmp2_table);
 //jmp3
-	buf = (u64*)malloc(JMP_CNT * 96);
-	for (int i = 0; i < JMP_CNT; i++)
-	{
-		memcpy(buf + i * 12, EcJumps3[i].p.x.data, 32);
-		memcpy(buf + i * 12 + 4, EcJumps3[i].p.y.data, 32);
-		memcpy(buf + i * 12 + 8, EcJumps3[i].dist.data, 32);
-	}
-	err = cudaMemcpy(Kparams.Jumps3, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess)
-	{
-		printf("GPU %d, cudaMemcpy Jumps3 failed: %s\n", CudaIndex, cudaGetErrorString(err));
-		return false;
-	}
-	free(buf);
+    buf = (u64*)malloc(JMP_CNT * 96);
+    if (buf == NULL) {
+        printf("Failed to allocate memory for jumps buffer\n");
+        return false;
+    }
+    
+    for (int i = 0; i < JMP_CNT; i++)
+    {
+        memcpy(buf + i * 12, EcJumps3[i].p.x.data, 32);
+        memcpy(buf + i * 12 + 4, EcJumps3[i].p.y.data, 32);
+        memcpy(buf + i * 12 + 8, EcJumps3[i].dist.data, 32);
+    }
+    err = cudaMemcpy(Kparams.Jumps3, buf, JMP_CNT * 96, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess)
+    {
+        printf("GPU %d, cudaMemcpy Jumps3 failed: %s\n", CudaIndex, cudaGetErrorString(err));
+        free(buf);
+        return false;
+    }
+    free(buf);
 
-	printf("GPU %d: allocated %llu MB, %d kangaroos. OldGpuMode: %s\r\n", CudaIndex, total_mem / (1024 * 1024), KangCnt, IsOldGpu ? "Yes" : "No");
-	return true;
+    printf("GPU %d: allocated %llu MB, %d kangaroos. OldGpuMode: %s\r\n", CudaIndex, total_mem / (1024 * 1024), KangCnt, IsOldGpu ? "Yes" : "No");
+    return true;
 }
 
 void RCGpuKang::Release()
