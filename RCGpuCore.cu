@@ -14,6 +14,13 @@
 #include <stdio.h>
 #endif
 
+// Make sure these functions are properly exported with extern "C" linkage
+extern "C" {
+    cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
+    void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
+    void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
+}
+
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
