@@ -47,8 +47,8 @@
     void _BitScanForward64(u32* index, u64 msk);       
     typedef __uint128_t uint128_t;
     u64 _umul128(u64 m1, u64 m2, u64* hi);
-    u64 __shiftright128(u64 LowPart, u64 HighPart, unsigned int Shift);
-    u64 __shiftleft128(u64 LowPart, u64 HighPart, unsigned int Shift);
+    u64 __shiftright128(u64 LowPart, u64 HighPart, unsigned char Shift);
+    u64 __shiftleft128(u64 LowPart, u64 HighPart, unsigned char Shift);
 #endif
 
 class CriticalSection
