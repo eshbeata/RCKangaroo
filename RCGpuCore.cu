@@ -845,8 +845,6 @@ __global__ void KernelGen(const TKparams Kparams)
     {
         u32 kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE) + group;
 
-        // Removed gEnd check
-
         __align__(16) u64 x0[4], y0[4], d[3];
         __align__(16) u64 x[4], y[4];
         __align__(16) u64 tx[4], ty[4];
@@ -863,6 +861,12 @@ __global__ void KernelGen(const TKparams Kparams)
         d[0] = Kparams.Kangs[kang_ind * 12 + 8];
         d[1] = Kparams.Kangs[kang_ind * 12 + 9];
         d[2] = Kparams.Kangs[kang_ind * 12 + 10];
+
+        // Debugging output for initial values
+        if (THREAD_X == 0 && BLOCK_X == 0 && group == 0) {
+            printf("Debug: Initial values for kang_ind %u: x0 = [0x%016llx, 0x%016llx, 0x%016llx, 0x%016llx], y0 = [0x%016llx, 0x%016llx, 0x%016llx, 0x%016llx], d = [0x%016llx, 0x%016llx, 0x%016llx]\n",
+                   kang_ind, x0[0], x0[1], x0[2], x0[3], y0[0], y0[1], y0[2], y0[3], d[0], d[1], d[2]);
+        }
 
         tx[0] = GX_0; tx[1] = GX_1; tx[2] = GX_2; tx[3] = GX_3;
         ty[0] = GY_0; ty[1] = GY_1; ty[2] = GY_2; ty[3] = GY_3;
