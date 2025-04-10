@@ -243,7 +243,11 @@ bool TFastBase::LoadFromFile(char* fn)
 			for (int k = 0; k < 256; k++)
 			{
 				TListRec* list = &lists[i][j][k];
-				fread(&list->cnt, 1, 2, fp);
+				size_t result = fread(&list->cnt, 1, 2, fp);
+				if (result != 2) {
+					// Handle error if fread does not read the expected number of bytes
+					return false;
+				}
 				if (list->cnt)
 				{
 					u32 grow = list->cnt / 2;

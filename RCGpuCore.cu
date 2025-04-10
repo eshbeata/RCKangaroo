@@ -6,6 +6,7 @@
 
 #include "defs.h"
 #include "RCGpuUtils.h"
+#include <cstdio>
 
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
