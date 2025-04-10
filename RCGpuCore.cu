@@ -94,6 +94,11 @@ __global__ void KernelA(const TKparams Kparams)
 
     for (int step_ind = 0; step_ind < STEP_CNT; step_ind++)
     {
+        // Debugging output for each step
+        if (THREAD_X == 0 && BLOCK_X == 0) {
+            printf("Debug: step_ind = %d\n", step_ind);
+        }
+
         __align__(16) u64 inverse[5];
 		u64* jmp_table;
 		__align__(16) u64 jmp_x[4];
