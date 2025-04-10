@@ -9,7 +9,6 @@
 #include "cuda.h"
 
 #include "GpuKang.h"
-#include "RCGpuCore.cu" // Include the file where KernelA, KernelB, and KernelC are defined
 #include "RCGpuCore.h" // Include the header file for kernel declarations
 
 // Ensure BLOCK_CNT and BLOCK_SIZE are defined
@@ -525,42 +524,4 @@ int RCGpuKang::GetStatsSpeed()
 	for (int i = 1; i < STATS_WND_SIZE; i++)
 		res += SpeedStats[i];
 	return res / STATS_WND_SIZE;
-}
-
-void CallGpuKernelABC(TKparams Kparams)
-{
-    cudaError_t err;
-
-    // Launch KernelA
-    KernelA <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelA_LDS_Size >>> (Kparams);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("KernelA launch error: %s\n", cudaGetErrorString(err));
-        return;
-    }
-
-    // Synchronize to flush output
-    cudaDeviceSynchronize();
-
-    // Launch KernelB
-    KernelB <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelB_LDS_Size >>> (Kparams);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("KernelB launch error: %s\n", cudaGetErrorString(err));
-        return;
-    }
-
-    // Synchronize to flush output
-    cudaDeviceSynchronize();
-
-    // Launch KernelC
-    KernelC <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelC_LDS_Size >>> (Kparams);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("KernelC launch error: %s\n", cudaGetErrorString(err));
-        return;
-    }
-
-    // Synchronize to flush output
-    cudaDeviceSynchronize();
 }

@@ -7,6 +7,11 @@
 #include "defs.h"
 #include "RCGpuUtils.h"
 #include <cstdio>
+#include <cuda_runtime.h>
+#include <algorithm> // For std::min
+
+// Ensure atomicAdd and min are recognized
+using std::min;
 
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
