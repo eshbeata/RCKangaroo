@@ -17,7 +17,7 @@ done
 
 # Function to check if RCKangaroo is running
 check_rc_running() {
-    if ! pgrep rckangaroo > /dev/null; then
+    if ! pgrep -f rckangaroo > /dev/null; then
         echo "RCKangaroo is not running. Please start it first."
         exit 1
     fi
@@ -28,13 +28,23 @@ get_gpu_stats() {
     echo "============ GPU STATS ============"
     nvidia-smi --query-gpu=index,name,utilization.gpu,utilization.memory,temperature.gpu,power.draw,clocks.current.graphics,clocks.current.memory --format=csv,noheader
     
-    # Get memory usage
+    # Get memory usage - fixed to use pgrep correctly
     echo "============ GPU MEMORY ============"
-    nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | grep $(pgrep rckangaroo)
+    RC_PID=$(pgrep -f rckangaroo)
+    if [ -n "$RC_PID" ]; then
+        nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | grep "$RC_PID" || echo "No GPU memory usage found for RCKangaroo"
+    else
+        echo "RCKangaroo process not found"
+    fi
     
-    # Get detailed process statistics
+    # Get detailed process statistics - fixed to use pgrep correctly
     echo "============ PROCESS STATS ============"
-    ps -p $(pgrep rckangaroo) -o pid,ppid,cmd,%cpu,%mem,rss
+    RC_PID=$(pgrep -f rckangaroo)
+    if [ -n "$RC_PID" ]; then
+        ps -p $RC_PID -o pid,ppid,cmd,%cpu,%mem,rss || echo "Could not get process stats"
+    else
+        echo "RCKangaroo process not found"
+    fi
 }
 
 # Function to check GPU thermal throttling
@@ -53,20 +63,24 @@ optimize_clocks() {
     MEM_UTIL=$(nvidia-smi --query-gpu=utilization.memory --format=csv,noheader | sed 's/ %//g')
     
     # If GPU utilization is below 90% but memory is high, we might be memory-bound
-    if [ "$GPU_UTIL" -lt 90 ] && [ "$MEM_UTIL" -gt 80 ]; then
-        echo "Memory-bound operation detected. Optimizing memory clocks..."
-        CURRENT_MEM_CLOCK=$(nvidia-smi --query-gpu=clocks.current.memory --format=csv,noheader | sed 's/ MHz//g')
-        MAX_MEM_CLOCK=$(nvidia-smi --query-gpu=clocks.max.memory --format=csv,noheader | sed 's/ MHz//g')
-        
-        if [ "$CURRENT_MEM_CLOCK" -lt "$MAX_MEM_CLOCK" ]; then
-            if [ -x "$(command -v nvidia-settings)" ] && [ -n "$DISPLAY" ]; then
-                echo "Trying to increase memory clock..."
-                nvidia-settings -a "[gpu:0]/GPUMemoryTransferRateOffset[3]=500"
-            else
-                echo "Cannot adjust memory clocks automatically - nvidia-settings not available or no display."
-                echo "For maximum performance, consider manually setting memory overclocks."
+    if [ -n "$GPU_UTIL" ] && [ -n "$MEM_UTIL" ]; then
+        if [ "$GPU_UTIL" -lt 90 ] && [ "$MEM_UTIL" -gt 80 ]; then
+            echo "Memory-bound operation detected. Optimizing memory clocks..."
+            CURRENT_MEM_CLOCK=$(nvidia-smi --query-gpu=clocks.current.memory --format=csv,noheader | sed 's/ MHz//g')
+            MAX_MEM_CLOCK=$(nvidia-smi --query-gpu=clocks.max.memory --format=csv,noheader | sed 's/ MHz//g')
+            
+            if [ -n "$CURRENT_MEM_CLOCK" ] && [ -n "$MAX_MEM_CLOCK" ] && [ "$CURRENT_MEM_CLOCK" -lt "$MAX_MEM_CLOCK" ]; then
+                if [ -x "$(command -v nvidia-settings)" ] && [ -n "$DISPLAY" ]; then
+                    echo "Trying to increase memory clock..."
+                    nvidia-settings -a "[gpu:0]/GPUMemoryTransferRateOffset[3]=500"
+                else
+                    echo "Cannot adjust memory clocks automatically - nvidia-settings not available or no display."
+                    echo "For maximum performance, consider manually setting memory overclocks."
+                fi
             fi
         fi
+    else
+        echo "Could not determine GPU or memory utilization"
     fi
 }
 
@@ -84,12 +98,13 @@ analyze_output() {
             
             # Calculate trend if we have enough data points
             if [ $(wc -l < speed_history.tmp) -gt 5 ]; then
+                # Use AWK for calculations to avoid bc dependency
                 RECENT_AVG=$(tail -n 5 speed_history.tmp | awk '{sum+=$1} END {print sum/5}')
                 PREV_AVG=$(head -n 5 speed_history.tmp | awk '{sum+=$1} END {print sum/5}')
                 
-                if (( $(echo "$RECENT_AVG > $PREV_AVG" | bc -l) )); then
+                if awk "BEGIN {exit !($RECENT_AVG > $PREV_AVG)}"; then
                     echo "Performance trend: Improving ⬆️"
-                elif (( $(echo "$RECENT_AVG < $PREV_AVG * 0.95" | bc -l) )); then
+                elif awk "BEGIN {exit !($RECENT_AVG < $PREV_AVG * 0.95)}"; then
                     echo "Performance trend: Decreasing ⬇️ - Check for thermal throttling"
                 else
                     echo "Performance trend: Stable ➡️"
@@ -103,10 +118,26 @@ analyze_output() {
             fi
         else
             echo "No performance data found in logs yet."
+            # Show the last few lines of the log to help diagnose issues
+            echo "Last 5 lines of rckangaroo.log:"
+            tail -n 5 rckangaroo.log
         fi
     else
-        echo "No log file found. Consider running RCKangaroo with output redirection: ./rckangaroo [options] > rckangaroo.log"
+        echo "No log file found. RCKangaroo should be running with output redirection: ./rckangaroo [options] > rckangaroo.log"
     fi
+}
+
+# Function to show system statistics
+show_system_stats() {
+    echo "============ SYSTEM STATS ============"
+    echo "CPU Usage:"
+    mpstat 1 1 | tail -n 1
+    
+    echo "Memory Usage:"
+    free -h
+    
+    echo "Disk I/O:"
+    iostat -xh 1 1 | grep -v "loop" | tail -n +6 | head -n 2
 }
 
 # Main monitoring loop
@@ -118,7 +149,11 @@ echo "Press Ctrl+C to stop monitoring."
 > speed_history.tmp
 
 # Initial check
-check_rc_running
+RC_PID=$(pgrep -f rckangaroo)
+if [ -z "$RC_PID" ]; then
+    echo "WARNING: RCKangaroo does not appear to be running."
+    echo "Starting monitoring anyway, but some stats may be unavailable."
+fi
 
 while true; do
     clear
@@ -128,6 +163,7 @@ while true; do
     get_gpu_stats
     check_thermal_throttling
     optimize_clocks
+    show_system_stats
     analyze_output
     
     echo -e "\nPress Ctrl+C to exit."
