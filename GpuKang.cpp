@@ -516,3 +516,41 @@ int RCGpuKang::GetStatsSpeed()
 		res += SpeedStats[i];
 	return res / STATS_WND_SIZE;
 }
+
+void CallGpuKernelABC(TKparams Kparams)
+{
+    cudaError_t err;
+
+    // Launch KernelA
+    KernelA <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelA_LDS_Size >>> (Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("KernelA launch error: %s\n", cudaGetErrorString(err));
+        return;
+    }
+
+    // Synchronize to flush output
+    cudaDeviceSynchronize();
+
+    // Launch KernelB
+    KernelB <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelB_LDS_Size >>> (Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("KernelB launch error: %s\n", cudaGetErrorString(err));
+        return;
+    }
+
+    // Synchronize to flush output
+    cudaDeviceSynchronize();
+
+    // Launch KernelC
+    KernelC <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelC_LDS_Size >>> (Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("KernelC launch error: %s\n", cudaGetErrorString(err));
+        return;
+    }
+
+    // Synchronize to flush output
+    cudaDeviceSynchronize();
+}
