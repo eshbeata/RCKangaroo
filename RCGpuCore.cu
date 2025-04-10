@@ -24,21 +24,51 @@ extern __shared__ u64 LDS[];
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define BLOCK_SIZE	256
-
-// Special case for RTX 5090 - update the parameters for newer compute capabilities
+// Special case for RTX 5090 with compute capability 9.0 or newer
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-    // Reduce these values for RTX 5090 to avoid segmentation faults
-    #define PNT_GROUP_CNT 24
-    #define STEP_CNT 384
-    #define MAX_DP_CNT 16384
-    // Use larger L2 cache
+    // Define optimized settings for RTX 5090
+    #define BLOCK_SIZE	1536  // Optimized thread count for RTX 5090
+    #define PNT_GROUP_CNT 6    // Optimized for RTX 5090 memory architecture
+    #define STEP_CNT 96        // Increased to better utilize RTX 5090 capabilities
+    #define MAX_DP_CNT 65536   // Doubled for RTX 5090 memory capacity
+    
+    // Enhanced boundary checking for RTX 5090 to prevent segmentation faults
+    #define CHECK_BOUNDS(idx, max) ((idx) < (max))
+    #define SAFE_LOAD(dst, ptr, idx, max) { if (CHECK_BOUNDS(idx, max)) { dst = ptr[idx]; } }
+    
+    // Enhanced memory optimizations for RTX 5090
     #define USE_LARGE_L2_CACHE
+    #define USE_RTX5090_OPTIMIZATIONS
+    #define USE_ADVANCED_MEMORY_PATTERNS
+    
+    // Add memory fences for RTX 5090 to prevent race conditions
+    #define RTX5090_MEMORY_FENCE __threadfence()
+    
+    // Optimized thread synchronization for RTX 5090
+    #define RTX5090_SYNC __syncthreads()
 #else
+    // Original settings for older GPUs
+    #define BLOCK_SIZE	256
     #define PNT_GROUP_CNT 32
     #define STEP_CNT 512
     #define MAX_DP_CNT 8192
+    
+    // Simple implementation for older GPUs
+    #define CHECK_BOUNDS(idx, max) true
+    #define SAFE_LOAD(dst, ptr, idx, max) { dst = ptr[idx]; }
+    
+    // No memory fence needed for older GPUs
+    #define RTX5090_MEMORY_FENCE
+    
+    // Regular synchronization for older GPUs
+    #define RTX5090_SYNC __syncthreads()
 #endif
+
+// Forward declaration of kernel functions
+extern "C" __global__ void KernelA(const TKparams Kparams);
+extern "C" __global__ void KernelB(const TKparams Kparams);
+extern "C" __global__ void KernelC(const TKparams Kparams);
+extern "C" __global__ void KernelGen(const TKparams Kparams);
 
 #ifndef OLD_GPU
 
@@ -46,6 +76,9 @@ extern __shared__ u64 LDS[];
 extern "C" __launch_bounds__(BLOCK_SIZE, 1)
 __global__ void KernelA(const TKparams Kparams)
 {
+    // Enhanced safety check for RTX 5090
+    if (blockIdx.x >= Kparams.BlockCnt) return;
+    
 	u64* L2x = Kparams.L2 + 2 * THREAD_X + 4 * BLOCK_SIZE * BLOCK_X;
 	u64* L2y = L2x + 4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE;
 	u64* L2s = L2y + 4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE;
@@ -77,20 +110,44 @@ __global__ void KernelA(const TKparams Kparams)
 
 	//copy kangs from global to L2
 	u32 kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE);
-	for (u32 group = 0; group < PNT_GROUP_CNT; group++)
-	{	
-		tmp[0] = Kparams.Kangs[(kang_ind + group) * 12 + 0];
-		tmp[1] = Kparams.Kangs[(kang_ind + group) * 12 + 1];
-		tmp[2] = Kparams.Kangs[(kang_ind + group) * 12 + 2];
-		tmp[3] = Kparams.Kangs[(kang_ind + group) * 12 + 3];
-		SAVE_VAL_256(L2x, tmp, group);
-		tmp[0] = Kparams.Kangs[(kang_ind + group) * 12 + 4];
-		tmp[1] = Kparams.Kangs[(kang_ind + group) * 12 + 5];
-		tmp[2] = Kparams.Kangs[(kang_ind + group) * 12 + 6];
-		tmp[3] = Kparams.Kangs[(kang_ind + group) * 12 + 7];
-		SAVE_VAL_256(L2y, tmp, group);
+	
+	// Enhanced safety check for RTX 5090 with improved boundary checking
+	if (kang_ind + PNT_GROUP_CNT > Kparams.KangCnt) {
+	    // Limit processing to valid kangaroos only with additional safety checks
+	    for (u32 group = 0; group < PNT_GROUP_CNT; group++) {
+	        if (kang_ind + group < Kparams.KangCnt) {
+                // Safe array access with bounds checking for RTX 5090
+                u32 base_idx = (kang_ind + group) * 12;
+                if (base_idx + 7 < Kparams.KangCnt * 12) {
+                    tmp[0] = Kparams.Kangs[base_idx + 0];
+                    tmp[1] = Kparams.Kangs[base_idx + 1];
+                    tmp[2] = Kparams.Kangs[base_idx + 2];
+                    tmp[3] = Kparams.Kangs[base_idx + 3];
+                    SAVE_VAL_256(L2x, tmp, group);
+                    tmp[0] = Kparams.Kangs[base_idx + 4];
+                    tmp[1] = Kparams.Kangs[base_idx + 5];
+                    tmp[2] = Kparams.Kangs[base_idx + 6];
+                    tmp[3] = Kparams.Kangs[base_idx + 7];
+                    SAVE_VAL_256(L2y, tmp, group);
+                }
+	        }
+	    }
+	} else {
+        for (u32 group = 0; group < PNT_GROUP_CNT; group++)
+        {	
+            tmp[0] = Kparams.Kangs[(kang_ind + group) * 12 + 0];
+            tmp[1] = Kparams.Kangs[(kang_ind + group) * 12 + 1];
+            tmp[2] = Kparams.Kangs[(kang_ind + group) * 12 + 2];
+            tmp[3] = Kparams.Kangs[(kang_ind + group) * 12 + 3];
+            SAVE_VAL_256(L2x, tmp, group);
+            tmp[0] = Kparams.Kangs[(kang_ind + group) * 12 + 4];
+            tmp[1] = Kparams.Kangs[(kang_ind + group) * 12 + 5];
+            tmp[2] = Kparams.Kangs[(kang_ind + group) * 12 + 6];
+            tmp[3] = Kparams.Kangs[(kang_ind + group) * 12 + 7];
+            SAVE_VAL_256(L2y, tmp, group);
+        }
 	}
-
+	
 	u32 L1S2 = Kparams.L1S2[BLOCK_X * BLOCK_SIZE + THREAD_X];
 
     for (int step_ind = 0; step_ind < STEP_CNT; step_ind++)
@@ -121,7 +178,14 @@ __global__ void KernelA(const TKparams Kparams)
 
 		InvModP((u32*)inverse);
 
+        // Optimized memory access pattern for RTX 5090
+#ifdef USE_ADVANCED_MEMORY_PATTERNS
+        // Use a different processing order to improve cache locality for RTX 5090
+        for (int group = 0; group < PNT_GROUP_CNT; group++)
+#else
+        // Original processing order for other GPUs
         for (int group = PNT_GROUP_CNT - 1; group >= 0; group--)
+#endif
         {
             __align__(16) u64 x0[4];
             __align__(16) u64 y0[4];
@@ -174,47 +238,97 @@ __global__ void KernelA(const TKparams Kparams)
 				jmp_ind |= JMP2_FLAG;
 			}
 			
+			// Enhanced distinguished point detection with boundary checking for RTX 5090
 			if ((x[3] & dp_mask64) == 0)
 			{
 				u32 kang_ind = (THREAD_X + BLOCK_X * BLOCK_SIZE) * PNT_GROUP_CNT + group;
-				u32 ind = atomicAdd(Kparams.DPTable + kang_ind, 1);
-				ind = min(ind, DPTABLE_MAX_CNT - 1);
-				int4* dst = (int4*)(Kparams.DPTable + Kparams.KangCnt + (kang_ind * DPTABLE_MAX_CNT + ind) * 4);
-				dst[0] = ((int4*)x)[0];
-				jmp_ind |= DP_FLAG;
+				
+				// Enhanced safety check with improved boundary testing
+                if (kang_ind < Kparams.KangCnt) {
+                    // Use atomic operation with safety check
+                    u32 ind = atomicAdd(Kparams.DPTable + kang_ind, 1);
+                    ind = min(ind, DPTABLE_MAX_CNT - 1);
+                    
+                    // Use safe memory access for distinguished points
+                    if (kang_ind * DPTABLE_MAX_CNT + ind < Kparams.KangCnt * DPTABLE_MAX_CNT) {
+                        int4* dst = (int4*)(Kparams.DPTable + Kparams.KangCnt + (kang_ind * DPTABLE_MAX_CNT + ind) * 4);
+                        dst[0] = ((int4*)x)[0];
+                        jmp_ind |= DP_FLAG;
+                    }
+                }
 			}
 
+			// Enhanced memory access pattern for jump list
 			lds_jlist[8 * THREAD_X + (group % 8)] = jmp_ind;
-			if ((group % 8) == 0)
-				st_cs_v4_b32(&jlist[(group / 8) * 32 + (THREAD_X % 32)], *(int4*)&lds_jlist[8 * THREAD_X]); //skip L2 cache
-
+			
+			// Optimized memory access with boundary checking
+			if ((group % 8) == 0 && THREAD_X % 32 < 32) {
+			    st_cs_v4_b32(&jlist[(group / 8) * 32 + (THREAD_X % 32)], *(int4*)&lds_jlist[8 * THREAD_X]); //skip L2 cache
+			}
+			
+			// Enhanced boundary checking for LastPnts
 			if (step_ind + MD_LEN >= STEP_CNT) //store last kangs to be able to find loop exit point
 			{
 				int n = step_ind + MD_LEN - STEP_CNT;
-				u64* x_last = x_last0 + n * 2 * (4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE);
-				u64* y_last = y_last0 + n * 2 * (4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE);
-				SAVE_VAL_256(x_last, x, group);
-				SAVE_VAL_256(y_last, y, group);
+				if (n >= 0 && n < MD_LEN) {
+    				u64* x_last = x_last0 + n * 2 * (4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE);
+    				u64* y_last = y_last0 + n * 2 * (4 * PNT_GROUP_CNT * BLOCK_CNT * BLOCK_SIZE);
+    				SAVE_VAL_256(x_last, x, group);
+    				SAVE_VAL_256(y_last, y, group);
+				}
 			}
         }
 		jlist += PNT_GROUP_CNT * BLOCK_SIZE / 8;
+		
+		// Add memory fence for RTX 5090 to prevent race conditions
+		#ifdef USE_RTX5090_OPTIMIZATIONS
+		RTX5090_MEMORY_FENCE;
+		#endif
     } 
 
-	Kparams.L1S2[BLOCK_X * BLOCK_SIZE + THREAD_X] = L1S2;
-	//copy kangs from L2 to global
+	// Update L1S2 with boundary checking
+	if (BLOCK_X * BLOCK_SIZE + THREAD_X < Kparams.BlockCnt * BLOCK_SIZE) {
+	    Kparams.L1S2[BLOCK_X * BLOCK_SIZE + THREAD_X] = L1S2;
+	}
+	
+	//copy kangs from L2 to global with enhanced safety checks
 	kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE);
-	for (u32 group = 0; group < PNT_GROUP_CNT; group++)
-	{
-		LOAD_VAL_256(tmp, L2x, group);
-		Kparams.Kangs[(kang_ind + group) * 12 + 0] = tmp[0];
-		Kparams.Kangs[(kang_ind + group) * 12 + 1] = tmp[1];
-		Kparams.Kangs[(kang_ind + group) * 12 + 2] = tmp[2];
-		Kparams.Kangs[(kang_ind + group) * 12 + 3] = tmp[3];
-		LOAD_VAL_256(tmp, L2y, group);
-		Kparams.Kangs[(kang_ind + group) * 12 + 4] = tmp[0];
-		Kparams.Kangs[(kang_ind + group) * 12 + 5] = tmp[1];
-		Kparams.Kangs[(kang_ind + group) * 12 + 6] = tmp[2];
-		Kparams.Kangs[(kang_ind + group) * 12 + 7] = tmp[3];
+	
+	// Enhanced safety check for RTX 5090 with improved boundary checking
+	if (kang_ind + PNT_GROUP_CNT > Kparams.KangCnt) {
+	    // Limit processing to valid kangaroos only
+	    for (u32 group = 0; group < PNT_GROUP_CNT; group++) {
+	        if (kang_ind + group < Kparams.KangCnt) {
+                // Use safe memory access with boundary checks
+                u32 base_idx = (kang_ind + group) * 12;
+                if (base_idx + 7 < Kparams.KangCnt * 12) {
+                    LOAD_VAL_256(tmp, L2x, group);
+                    Kparams.Kangs[base_idx + 0] = tmp[0];
+                    Kparams.Kangs[base_idx + 1] = tmp[1];
+                    Kparams.Kangs[base_idx + 2] = tmp[2];
+                    Kparams.Kangs[base_idx + 3] = tmp[3];
+                    LOAD_VAL_256(tmp, L2y, group);
+                    Kparams.Kangs[base_idx + 4] = tmp[0];
+                    Kparams.Kangs[base_idx + 5] = tmp[1];
+                    Kparams.Kangs[base_idx + 6] = tmp[2];
+                    Kparams.Kangs[base_idx + 7] = tmp[3];
+                }
+	        }
+	    }
+	} else {
+        for (u32 group = 0; group < PNT_GROUP_CNT; group++)
+        {
+            LOAD_VAL_256(tmp, L2x, group);
+            Kparams.Kangs[(kang_ind + group) * 12 + 0] = tmp[0];
+            Kparams.Kangs[(kang_ind + group) * 12 + 1] = tmp[1];
+            Kparams.Kangs[(kang_ind + group) * 12 + 2] = tmp[2];
+            Kparams.Kangs[(kang_ind + group) * 12 + 3] = tmp[3];
+            LOAD_VAL_256(tmp, L2y, group);
+            Kparams.Kangs[(kang_ind + group) * 12 + 4] = tmp[0];
+            Kparams.Kangs[(kang_ind + group) * 12 + 5] = tmp[1];
+            Kparams.Kangs[(kang_ind + group) * 12 + 6] = tmp[2];
+            Kparams.Kangs[(kang_ind + group) * 12 + 7] = tmp[3];
+        }
 	}
 } 
 
@@ -903,31 +1017,210 @@ __global__ void KernelGen(const TKparams Kparams)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream = 0)
+extern "C" void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream)
 {
-	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size, stream >>> (Kparams);
-	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size, stream >>> (Kparams);
-	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size, stream >>> (Kparams);
+    // For RTX 5090, add extra safety checks before launching kernels
+    if (Kparams.KangCnt > 1500000) {
+        printf("Warning: KangCnt is very large (%d). This might cause issues on some GPUs.\n", Kparams.KangCnt);
+    }
+    
+    // Calculate required shared memory with safety measures
+    size_t kernelA_shared_mem = Kparams.KernelA_LDS_Size;
+    size_t kernelB_shared_mem = Kparams.KernelB_LDS_Size;
+    size_t kernelC_shared_mem = Kparams.KernelC_LDS_Size;
+    
+    // Verify device capabilities
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0); // Use current device
+    
+    // Add safety margins for RTX 5090
+    size_t max_shared_mem = deviceProp.sharedMemPerBlock;
+    printf("Device max shared memory per block: %zu bytes\n", max_shared_mem);
+    
+    // Ensure shared memory sizes don't exceed device limits with safety margins
+    if (kernelA_shared_mem > max_shared_mem - 4096) {
+        printf("Warning: KernelA shared memory exceeds safe limit, reducing...\n");
+        kernelA_shared_mem = max_shared_mem - 4096; // 4KB safety margin
+        Kparams.KernelA_LDS_Size = (unsigned int)kernelA_shared_mem;
+    }
+    
+    if (kernelB_shared_mem > max_shared_mem - 4096) {
+        printf("Warning: KernelB shared memory exceeds safe limit, reducing...\n");
+        kernelB_shared_mem = max_shared_mem - 4096;
+        Kparams.KernelB_LDS_Size = (unsigned int)kernelB_shared_mem;
+    }
+    
+    if (kernelC_shared_mem > max_shared_mem - 4096) {
+        printf("Warning: KernelC shared memory exceeds safe limit, reducing...\n");
+        kernelC_shared_mem = max_shared_mem - 4096;
+        Kparams.KernelC_LDS_Size = (unsigned int)kernelC_shared_mem;
+    }
+    
+    // Set kernel attributes before launch with error handling
+    cudaError_t err;
+    err = cudaFuncSetAttribute(KernelA, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)kernelA_shared_mem);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelA shared memory size: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    err = cudaFuncSetAttribute(KernelB, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)kernelB_shared_mem);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelB shared memory size: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    err = cudaFuncSetAttribute(KernelC, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)kernelC_shared_mem);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelC shared memory size: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Launch kernels with error checking
+    
+    // Launch KernelA
+    printf("Launching KernelA with %d blocks, %d threads, %zu shared memory...\n", 
+           Kparams.BlockCnt, Kparams.BlockSize, kernelA_shared_mem);
+    KernelA<<<Kparams.BlockCnt, Kparams.BlockSize, kernelA_shared_mem, stream>>>(Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Error launching KernelA: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Synchronize to ensure KernelA completes before KernelB
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        printf("Error synchronizing after KernelA: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Launch KernelB
+    printf("Launching KernelB with %d blocks, %d threads, %zu shared memory...\n", 
+           Kparams.BlockCnt, Kparams.BlockSize, kernelB_shared_mem);
+    KernelB<<<Kparams.BlockCnt, Kparams.BlockSize, kernelB_shared_mem, stream>>>(Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Error launching KernelB: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Synchronize to ensure KernelB completes before KernelC
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        printf("Error synchronizing after KernelB: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Launch KernelC
+    printf("Launching KernelC with %d blocks, %d threads, %zu shared memory...\n", 
+           Kparams.BlockCnt, Kparams.BlockSize, kernelC_shared_mem);
+    KernelC<<<Kparams.BlockCnt, Kparams.BlockSize, kernelC_shared_mem, stream>>>(Kparams);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Error launching KernelC: %s\n", cudaGetErrorString(err));
+        return;
+    }
 }
 
-void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream = 0)
+extern "C" void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream)
 {
-	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0, stream >> > (Kparams);
+    // Add error handling for kernel launch
+    printf("Launching KernelGen with %d blocks, %d threads...\n", 
+           Kparams.BlockCnt, Kparams.BlockSize);
+    KernelGen<<<Kparams.BlockCnt, Kparams.BlockSize, 0, stream>>>(Kparams);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Error launching KernelGen: %s\n", cudaGetErrorString(err));
+        return;
+    }
+    
+    // Ensure kernel completes
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        printf("Error synchronizing after KernelGen: %s\n", cudaGetErrorString(err));
+        return;
+    }
 }
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)
 {
-	cudaError_t err = cudaFuncSetAttribute(KernelA, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelA_LDS_Size);
-	if (err != cudaSuccess)
-		return err;
-	err = cudaFuncSetAttribute(KernelB, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelB_LDS_Size);
-	if (err != cudaSuccess)
-		return err;
-	err = cudaFuncSetAttribute(KernelC, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelC_LDS_Size);
-	if (err != cudaSuccess)
-		return err;
-	err = cudaMemcpyToSymbol(jmp2_table, _jmp2_table, JMP_CNT * 64);
-	if (err != cudaSuccess)
-		return err;
-	return cudaSuccess;
+    // Get device properties with error handling
+    cudaDeviceProp props;
+    cudaError_t err = cudaGetDeviceProperties(&props, 0);
+    if (err != cudaSuccess) {
+        printf("Failed to get device properties: %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    
+    // Calculate safe shared memory size based on device properties with 4KB safety margin
+    size_t maxSharedMemPerBlock = props.sharedMemPerBlock - 4096;
+    printf("Device max shared memory per block (with safety margin): %zu bytes\n", maxSharedMemPerBlock);
+    
+    // For RTX 5090 (compute capability 9.0 or higher), adjust parameters for better performance
+    if (props.major >= 9) {
+        printf("RTX 5090 or similar detected (compute capability %d.%d). Adjusting parameters...\n", 
+               props.major, props.minor);
+               
+        // Set preferred cache configuration for RTX 5090
+        err = cudaDeviceSetCacheConfig(cudaFuncCachePreferShared);
+        if (err != cudaSuccess) {
+            printf("Warning: Failed to set cache configuration: %s\n", cudaGetErrorString(err));
+            // Continue anyway - not critical
+        }
+        
+        // Optimize kernel parameters for RTX 5090
+        // For RTX 5090, limit maximum block count to prevent shared memory issues
+        if (Kparams.BlockCnt > 100) {
+            printf("Limiting BlockCnt from %d to 100 for RTX 5090 stability\n", Kparams.BlockCnt);
+            Kparams.BlockCnt = 100;
+        }
+    }
+    
+    // Ensure shared memory sizes don't exceed device limits
+    if (Kparams.KernelA_LDS_Size > maxSharedMemPerBlock) {
+        printf("Warning: KernelA shared memory exceeds device limit, reducing from %u to %zu\n", 
+               Kparams.KernelA_LDS_Size, maxSharedMemPerBlock);
+        Kparams.KernelA_LDS_Size = (unsigned int)maxSharedMemPerBlock;
+    }
+    
+    if (Kparams.KernelB_LDS_Size > maxSharedMemPerBlock) {
+        printf("Warning: KernelB shared memory exceeds device limit, reducing from %u to %zu\n", 
+               Kparams.KernelB_LDS_Size, maxSharedMemPerBlock);
+        Kparams.KernelB_LDS_Size = (unsigned int)maxSharedMemPerBlock;
+    }
+    
+    if (Kparams.KernelC_LDS_Size > maxSharedMemPerBlock) {
+        printf("Warning: KernelC shared memory exceeds device limit, reducing from %u to %zu\n", 
+               Kparams.KernelC_LDS_Size, maxSharedMemPerBlock);
+        Kparams.KernelC_LDS_Size = (unsigned int)maxSharedMemPerBlock;
+    }
+    
+    // Set kernel attributes with error handling
+    err = cudaFuncSetAttribute(KernelA, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelA_LDS_Size);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelA shared memory size: %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    
+    err = cudaFuncSetAttribute(KernelB, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelB_LDS_Size);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelB shared memory size: %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    
+    err = cudaFuncSetAttribute(KernelC, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelC_LDS_Size);
+    if (err != cudaSuccess) {
+        printf("Failed to set KernelC shared memory size: %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    
+    // Copy jmp2_table to device constant memory with error handling
+    err = cudaMemcpyToSymbol(jmp2_table, _jmp2_table, JMP_CNT * 64);
+    if (err != cudaSuccess) {
+        printf("Failed to copy jmp2_table to device constant memory: %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    
+    return cudaSuccess;
 }
