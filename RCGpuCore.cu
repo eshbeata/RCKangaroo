@@ -863,7 +863,7 @@ __global__ void KernelGen(const TKparams Kparams)
         d[2] = Kparams.Kangs[kang_ind * 12 + 10];
 
         // Debugging output for initial values
-        if (THREAD_X == 0 && BLOCK_X == 0 && group == 0) {
+        if (THREAD_X == 0 && BLOCK_X == 0 && group < 5) {
             printf("Debug: Initial values for kang_ind %u: x0 = [0x%016llx, 0x%016llx, 0x%016llx, 0x%016llx], y0 = [0x%016llx, 0x%016llx, 0x%016llx, 0x%016llx], d = [0x%016llx, 0x%016llx, 0x%016llx]\n",
                    kang_ind, x0[0], x0[1], x0[2], x0[3], y0[0], y0[1], y0[2], y0[3], d[0], d[1], d[2]);
         }
