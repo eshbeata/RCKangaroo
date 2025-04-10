@@ -3,7 +3,6 @@
 // License: GPLv3, see "LICENSE.TXT" file
 // https://github.com/RetiredC
 
-
 #pragma once 
 
 #pragma warning(disable : 4996)
@@ -20,12 +19,6 @@ typedef char i8;
 // Increased maximum GPU count for multi-GPU setups
 #define MAX_GPU_CNT			64
 
-// Increased step count for better RTX 5090 performance
-#define STEP_CNT			1500
-
-// Increased jump count for better distribution
-#define JMP_CNT				1024
-
 //use different options for cards older than RTX 50xx
 #ifdef __CUDA_ARCH__
 	#if __CUDA_ARCH__ < 900
@@ -36,15 +29,42 @@ typedef char i8;
 		//can be 8, 16, 24, 32, 40, 48, 56, 64
 		#define PNT_GROUP_CNT		64	
 	#else
-		// Optimized block size for RTX 5090
-		#define BLOCK_SIZE			256
-		// Increased group count for better SM utilization on RTX 5090
-		#define PNT_GROUP_CNT		48
+		// Special handling for RTX 5090
+		#ifdef RTX_5090_GPU
+			// Optimized settings for RTX 5090 to prevent segmentation faults
+			#define BLOCK_SIZE                       256
+			#define PNT_GROUP_CNT                    12    // Reduced from 48 for RTX 5090
+			#define STEP_CNT                         96    // Reduced from 1500 for RTX 5090
+			#define MD_LEN                          12     // Reduced from 16 for RTX 5090
+			#define JMP_CNT                         512
+			#define DPTABLE_MAX_CNT                  8     // Significantly reduced from 32 for RTX 5090
+			#define MAX_CNT_LIST                    65536  // Significantly reduced for RTX 5090
+			#define MAX_DP_CNT                      16384  // Significantly reduced for RTX 5090
+		#else
+			// Optimized block size for RTX 5090
+			#define BLOCK_SIZE			256
+			// Increased group count for better SM utilization on RTX 5090
+			#define PNT_GROUP_CNT		48
+			#define STEP_CNT			1500
+			#define MD_LEN				16
+			#define JMP_CNT				1024
+			#define DPTABLE_MAX_CNT		32
+			#define MAX_CNT_LIST		(2048 * 1024)
+			#define MAX_DP_CNT			(1024 * 1024)
+		#endif
 	#endif
 #else //CPU, fake values
 	#define BLOCK_SIZE			512
 	#define PNT_GROUP_CNT		64
+	#define STEP_CNT			1500
+	#define MD_LEN				16
+	#define JMP_CNT				1024
+	#define DPTABLE_MAX_CNT		32
+	#define MAX_CNT_LIST		(2048 * 1024)
+	#define MAX_DP_CNT			(1024 * 1024)
 #endif
+
+#define JMP_MASK			(JMP_CNT-1)
 
 // kang type
 #define TAME				0  // Tame kangs
@@ -52,23 +72,10 @@ typedef char i8;
 #define WILD2				2  // Wild kangs2
 
 #define GPU_DP_SIZE			48
-// Significantly increased for RTX 5090's larger memory
-#define MAX_DP_CNT			(1024 * 1024)
-
-#define JMP_MASK			(JMP_CNT-1)
-
-// Increased for better collision detection
-#define DPTABLE_MAX_CNT		32
-
-// Increased buffer size for RTX 5090's greater throughput
-#define MAX_CNT_LIST		(2048 * 1024)
 
 #define DP_FLAG				0x8000
 #define INV_FLAG			0x4000
 #define JMP2_FLAG			0x2000
-
-// Increased loop detection length
-#define MD_LEN				16
 
 //#define DEBUG_MODE
 
