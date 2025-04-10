@@ -937,3 +937,7 @@ cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)
 		return err;
 	return cudaSuccess;
 }
+
+extern "C" __global__ void KernelA(const TKparams Kparams);
+extern "C" __global__ void KernelB(const TKparams Kparams);
+extern "C" __global__ void KernelC(const TKparams Kparams);
