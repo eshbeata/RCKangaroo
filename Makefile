@@ -2,8 +2,8 @@ CC := g++
 NVCC := /usr/local/cuda-12.1/bin/nvcc
 CUDA_PATH ?= /usr/local/cuda-12.1
 
-CCFLAGS := -O3 -I$(CUDA_PATH)/include
-NVCCFLAGS := -O3 -gencode=arch=compute_89,code=compute_89 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_61,code=compute_61
+CCFLAGS := -O3 -I$(CUDA_PATH)/include -DDEBUG_MODE
+NVCCFLAGS := -O3 -gencode=arch=compute_89,code=compute_89 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_61,code=compute_61 -DDEBUG_MODE
 LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -pthread
 
 CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
