@@ -58,6 +58,12 @@ __global__ void KernelA(const TKparams Kparams)
 
 	__align__(16) u64 x[4], y[4], tmp[4], tmp2[4];
 	u64 dp_mask64 = ~((1ull << (64 - Kparams.DP)) - 1);
+
+    // Debugging output for dp_mask64
+    if (THREAD_X == 0 && BLOCK_X == 0) {
+        printf("Debug: dp_mask64 = 0x%016llx\n", dp_mask64);
+    }
+
 	u16 jmp_ind;
 
 	//copy kangs from global to L2
@@ -160,17 +166,17 @@ __global__ void KernelA(const TKparams Kparams)
 			}
 			
 			if ((x[3] & dp_mask64) == 0)
-			{
-				u32 kang_ind = (THREAD_X + BLOCK_X * BLOCK_SIZE) * PNT_GROUP_CNT + group;
-				u32 ind = atomicAdd(Kparams.DPTable + kang_ind, 1);
-				ind = min(ind, DPTABLE_MAX_CNT - 1);
-				int4* dst = (int4*)(Kparams.DPTable + Kparams.KangCnt + (kang_ind * DPTABLE_MAX_CNT + ind) * 4);
-				dst[0] = ((int4*)x)[0];
-				jmp_ind |= DP_FLAG;
+				{
+					// Debugging output for x[3]
+					printf("Debug: DP generated, x[3] = 0x%016llx\n", x[3]);
 
-				// Debugging output
-				printf("DP generated: kang_ind=%u, ind=%u, x[3]=%llu\n", kang_ind, ind, x[3]);
-			}
+					u32 kang_ind = (THREAD_X + BLOCK_X * BLOCK_SIZE) * PNT_GROUP_CNT + group;
+					u32 ind = atomicAdd(Kparams.DPTable + kang_ind, 1);
+					ind = min(ind, DPTABLE_MAX_CNT - 1);
+					int4* dst = (int4*)(Kparams.DPTable + Kparams.KangCnt + (kang_ind * DPTABLE_MAX_CNT + ind) * 4);
+					dst[0] = ((int4*)x)[0];
+					jmp_ind |= DP_FLAG;
+				}
 
 			lds_jlist[8 * THREAD_X + (group % 8)] = jmp_ind;
 			if ((group % 8) == 0)
