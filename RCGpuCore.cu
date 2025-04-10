@@ -48,10 +48,21 @@ extern __shared__ u64 LDS[];
     #define RTX5090_SYNC __syncthreads()
 #else
     // Original settings for older GPUs
-    #define BLOCK_SIZE	256
+    #ifndef BLOCK_SIZE
+    #define BLOCK_SIZE 256
+    #endif
+
+    #ifndef PNT_GROUP_CNT
     #define PNT_GROUP_CNT 32
+    #endif
+
+    #ifndef STEP_CNT
     #define STEP_CNT 512
+    #endif
+
+    #ifndef MAX_DP_CNT
     #define MAX_DP_CNT 8192
+    #endif
     
     // Simple implementation for older GPUs
     #define CHECK_BOUNDS(idx, max) true
@@ -1224,3 +1235,7 @@ cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)
     
     return cudaSuccess;
 }
+
+#if defined(__CUDA_ARCH__)
+#define printf(fmt, ...) // Disable printf in device code
+#endif
