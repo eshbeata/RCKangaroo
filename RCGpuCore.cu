@@ -817,76 +817,82 @@ __device__ __forceinline__ void DoublePoint(u64* res_x, u64* res_y, u64* pntx, u
 extern "C" __launch_bounds__(BLOCK_SIZE, 1)
 __global__ void KernelGen(const TKparams Kparams)
 {
-	for (u32 group = 0; group < PNT_GROUP_CNT; group++)
-	{
-		__align__(16) u64 x0[4], y0[4], d[3];
-		__align__(16) u64 x[4], y[4];
-		__align__(16) u64 tx[4], ty[4];
-		__align__(16) u64 t2x[4], t2y[4];
+    for (u32 group = 0; group < PNT_GROUP_CNT; group++)
+    {
+        u32 kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE) + group;
 
-		u32 kang_ind = PNT_GROUP_CNT * (THREAD_X + BLOCK_X * BLOCK_SIZE) + group;
-		x0[0] = Kparams.Kangs[kang_ind * 12 + 0];
-		x0[1] = Kparams.Kangs[kang_ind * 12 + 1];
-		x0[2] = Kparams.Kangs[kang_ind * 12 + 2];
-		x0[3] = Kparams.Kangs[kang_ind * 12 + 3];
-		y0[0] = Kparams.Kangs[kang_ind * 12 + 4];
-		y0[1] = Kparams.Kangs[kang_ind * 12 + 5];
-		y0[2] = Kparams.Kangs[kang_ind * 12 + 6];
-		y0[3] = Kparams.Kangs[kang_ind * 12 + 7];
-		d[0] = Kparams.Kangs[kang_ind * 12 + 8];
-		d[1] = Kparams.Kangs[kang_ind * 12 + 9];
-		d[2] = Kparams.Kangs[kang_ind * 12 + 10];
-		
-		tx[0] = GX_0; tx[1] = GX_1; tx[2] = GX_2; tx[3] = GX_3;
-		ty[0] = GY_0; ty[1] = GY_1; ty[2] = GY_2; ty[3] = GY_3;
+        // Check if the kangaroo index is within the range specified by gEnd
+        if (kang_ind >= Kparams.KangCnt || kang_ind >= Kparams.gEnd)
+            continue;
 
-		bool first = true;
-		int n = 2;
-		while ((n >= 0) && !d[n]) 
-			n--;
-		if (n < 0)
-			continue; //error
-		int index = __clzll(d[n]);
-		for (int i = 0; i <= 64 * n + (63 - index); i++)
-		{
-			u8 v = (d[i / 64] >> (i % 64)) & 1;
-			if (v)
-			{
-				if (first)
-				{
-					first = false;
-					Copy_u64_x4(x, tx);
-					Copy_u64_x4(y, ty);
-				}
-				else
-				{
-					AddPoints(t2x, t2y, x, y, tx, ty);
-					Copy_u64_x4(x, t2x);
-					Copy_u64_x4(y, t2y);
-				}
-			}
-			DoublePoint(t2x, t2y, tx, ty);
-			Copy_u64_x4(tx, t2x);
-			Copy_u64_x4(ty, t2y);
-		}
+        __align__(16) u64 x0[4], y0[4], d[3];
+        __align__(16) u64 x[4], y[4];
+        __align__(16) u64 tx[4], ty[4];
+        __align__(16) u64 t2x[4], t2y[4];
 
-		if (!Kparams.IsGenMode)
-			if (kang_ind >= Kparams.KangCnt / 3)
-			{
-				AddPoints(t2x, t2y, x, y, x0, y0);
-				Copy_u64_x4(x, t2x);
-				Copy_u64_x4(y, t2y);
-			}
+        x0[0] = Kparams.Kangs[kang_ind * 12 + 0];
+        x0[1] = Kparams.Kangs[kang_ind * 12 + 1];
+        x0[2] = Kparams.Kangs[kang_ind * 12 + 2];
+        x0[3] = Kparams.Kangs[kang_ind * 12 + 3];
+        y0[0] = Kparams.Kangs[kang_ind * 12 + 4];
+        y0[1] = Kparams.Kangs[kang_ind * 12 + 5];
+        y0[2] = Kparams.Kangs[kang_ind * 12 + 6];
+        y0[3] = Kparams.Kangs[kang_ind * 12 + 7];
+        d[0] = Kparams.Kangs[kang_ind * 12 + 8];
+        d[1] = Kparams.Kangs[kang_ind * 12 + 9];
+        d[2] = Kparams.Kangs[kang_ind * 12 + 10];
 
-		Kparams.Kangs[kang_ind * 12 + 0] = x[0];
-		Kparams.Kangs[kang_ind * 12 + 1] = x[1];
-		Kparams.Kangs[kang_ind * 12 + 2] = x[2];
-		Kparams.Kangs[kang_ind * 12 + 3] = x[3];
-		Kparams.Kangs[kang_ind * 12 + 4] = y[0];
-		Kparams.Kangs[kang_ind * 12 + 5] = y[1];
-		Kparams.Kangs[kang_ind * 12 + 6] = y[2];
-		Kparams.Kangs[kang_ind * 12 + 7] = y[3];
-	}
+        tx[0] = GX_0; tx[1] = GX_1; tx[2] = GX_2; tx[3] = GX_3;
+        ty[0] = GY_0; ty[1] = GY_1; ty[2] = GY_2; ty[3] = GY_3;
+
+        bool first = true;
+        int n = 2;
+        while ((n >= 0) && !d[n]) 
+            n--;
+        if (n < 0)
+            continue; //error
+
+        int index = __clzll(d[n]);
+        for (int i = 0; i <= 64 * n + (63 - index); i++)
+        {
+            u8 v = (d[i / 64] >> (i % 64)) & 1;
+            if (v)
+            {
+                if (first)
+                {
+                    first = false;
+                    Copy_u64_x4(x, tx);
+                    Copy_u64_x4(y, ty);
+                }
+                else
+                {
+                    AddPoints(t2x, t2y, x, y, tx, ty);
+                    Copy_u64_x4(x, t2x);
+                    Copy_u64_x4(y, t2y);
+                }
+            }
+            DoublePoint(t2x, t2y, tx, ty);
+            Copy_u64_x4(tx, t2x);
+            Copy_u64_x4(ty, t2y);
+        }
+
+        if (!Kparams.IsGenMode)
+            if (kang_ind >= Kparams.KangCnt / 3)
+            {
+                AddPoints(t2x, t2y, x, y, x0, y0);
+                Copy_u64_x4(x, t2x);
+                Copy_u64_x4(y, t2y);
+            }
+
+        Kparams.Kangs[kang_ind * 12 + 0] = x[0];
+        Kparams.Kangs[kang_ind * 12 + 1] = x[1];
+        Kparams.Kangs[kang_ind * 12 + 2] = x[2];
+        Kparams.Kangs[kang_ind * 12 + 3] = x[3];
+        Kparams.Kangs[kang_ind * 12 + 4] = y[0];
+        Kparams.Kangs[kang_ind * 12 + 5] = y[1];
+        Kparams.Kangs[kang_ind * 12 + 6] = y[2];
+        Kparams.Kangs[kang_ind * 12 + 7] = y[3];
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
