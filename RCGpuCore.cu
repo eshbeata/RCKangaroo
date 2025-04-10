@@ -59,10 +59,8 @@ __global__ void KernelA(const TKparams Kparams)
 	__align__(16) u64 x[4], y[4], tmp[4], tmp2[4];
 	u64 dp_mask64 = ~((1ull << (64 - Kparams.DP)) - 1);
 
-    // Debugging output for dp_mask64
-    if (THREAD_X == 0 && BLOCK_X == 0) {
-        printf("Debug: dp_mask64 = 0x%016llx\n", dp_mask64);
-    }
+    // Debugging output for dp_mask64 (expanded to all threads)
+    printf("Debug: dp_mask64 = 0x%016llx, THREAD_X = %d, BLOCK_X = %d\n", dp_mask64, THREAD_X, BLOCK_X);
 
 	u16 jmp_ind;
 
@@ -167,8 +165,8 @@ __global__ void KernelA(const TKparams Kparams)
 			
 			if ((x[3] & dp_mask64) == 0)
 				{
-					// Debugging output for x[3]
-					printf("Debug: DP generated, x[3] = 0x%016llx\n", x[3]);
+					// Debugging output for x[3] (expanded to all threads)
+					printf("Debug: DP generated, x[3] = 0x%016llx, THREAD_X = %d, BLOCK_X = %d\n", x[3], THREAD_X, BLOCK_X);
 
 					u32 kang_ind = (THREAD_X + BLOCK_X * BLOCK_SIZE) * PNT_GROUP_CNT + group;
 					u32 ind = atomicAdd(Kparams.DPTable + kang_ind, 1);
