@@ -1,6 +1,6 @@
 CC := g++
 NVCC := nvcc
-CUDA_PATH ?= /usr/local/cuda
+CUDA_PATH ?= /usr/local/cuda-12.1
 
 # Flags for optimized compilation
 CCFLAGS := -O3 -march=native -I$(CUDA_PATH)/include

@@ -260,7 +260,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
             
         err = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size); // set max allowed size for L2
         if (err != cudaSuccess) {
-            printf("Warning: Could not set L2 cache size limit: %s\n", cudaGetErrorString(err));
+            printf("Warning: Could not set L2 cache size limit: %s\n", CudaIndex, cudaGetErrorString(err));
             // Continue anyway, not critical
         }
         

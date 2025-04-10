@@ -24,6 +24,22 @@ extern __shared__ u64 LDS[];
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define BLOCK_SIZE	256
+
+// Special case for RTX 5090 - update the parameters for newer compute capabilities
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+    // Reduce these values for RTX 5090 to avoid segmentation faults
+    #define PNT_GROUP_CNT 24
+    #define STEP_CNT 384
+    #define MAX_DP_CNT 16384
+    // Use larger L2 cache
+    #define USE_LARGE_L2_CACHE
+#else
+    #define PNT_GROUP_CNT 32
+    #define STEP_CNT 512
+    #define MAX_DP_CNT 8192
+#endif
+
 #ifndef OLD_GPU
 
 //this kernel performs main jumps
