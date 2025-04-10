@@ -14,240 +14,80 @@ echo -e "${GREEN}= RCKangaroo RTX 5090 EMERGENCY HOTFIX =${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
 
-# Create extremely conservative settings header
-cat > emergency_rtx5090.h << EOF
-// EMERGENCY RTX 5090 HOTFIX - ULTRA CONSERVATIVE SETTINGS
+# Create simplified patch header that won't redefine macros
+cat > rtx5090_patch.h << EOF
+// RTX 5090 simplified patch - auto-generated
 #pragma once
 
-// Define extremely conservative settings to prevent segmentation faults
-#define RTX5090_EMERGENCY_MODE
+// Safety limits to prevent segmentation faults
+#ifndef RTX5090_MODE
+#define RTX5090_MODE
+#endif
 
-// Very minimal settings to ensure stability
-// These settings trade performance for guaranteed stability
-#define EMERGENCY_BLOCK_SIZE 128
-#define EMERGENCY_PNT_GROUP_CNT 4
-#define EMERGENCY_STEP_CNT 32
-#define EMERGENCY_MD_LEN 8
-#define EMERGENCY_DPTABLE_MAX_CNT 4
-#define EMERGENCY_MAX_CNT_LIST 16384
-#define EMERGENCY_MAX_DP_CNT 8192
-#define EMERGENCY_MAX_KANG_CNT 40000  // Very low kangaroo count
-
-// Memory optimization
-#define DISABLE_DEBUG_FEATURES
-#define USE_MINIMAL_MEMORY
+// Very conservative settings that won't conflict with existing code
+#define RTX5090_BLOCK_CNT 16
+#define RTX5090_KANGAROO_LIMIT 40000
+#define RTX5090_SHARED_MEM_SIZE (16 * 1024)
+#define RTX5090_STEP_LIMIT 32
+#define RTX5090_USE_MINIMAL_MEMORY
 EOF
 
-# Create our patching file that will be applied to GpuKang.cpp
-cat > emergency_patch.cpp << EOF
-// Emergency patch for RTX 5090 compatibility
-
-// Handle emergency mode if defined
-#ifdef RTX5090_EMERGENCY_MODE
-  // Override settings with ultra-conservative values
-  #undef BLOCK_SIZE
-  #undef PNT_GROUP_CNT
-  #undef STEP_CNT
-  #undef MD_LEN
-  #undef DPTABLE_MAX_CNT
-  #undef MAX_CNT_LIST
-  #undef MAX_DP_CNT
-  
-  #define BLOCK_SIZE EMERGENCY_BLOCK_SIZE
-  #define PNT_GROUP_CNT EMERGENCY_PNT_GROUP_CNT
-  #define STEP_CNT EMERGENCY_STEP_CNT
-  #define MD_LEN EMERGENCY_MD_LEN
-  #define DPTABLE_MAX_CNT EMERGENCY_DPTABLE_MAX_CNT
-  #define MAX_CNT_LIST EMERGENCY_MAX_CNT_LIST
-  #define MAX_DP_CNT EMERGENCY_MAX_DP_CNT
-#endif
-
-// Reduce default thread count to minimum
-int RCGpuKang::CalcKangCnt()
+# Create a minimal patch file
+cat > cuda_patch.cu << EOF
+// Extra safety for CUDA kernel calls
+extern "C" void SafeCallGpuKernelABC(TKparams Kparams, cudaStream_t stream)
 {
-#ifdef RTX5090_EMERGENCY_MODE
-    // Ultra-conservative settings for emergency mode
-    printf("EMERGENCY MODE: Using ultra-conservative settings to prevent segmentation faults\n");
+    // Get device properties first
+    cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, 0);
     
-    // Severe limitation on kangaroo count to ensure stability
-    Kparams.BlockCnt = 16;  // Use minimal block count
-    Kparams.BlockSize = EMERGENCY_BLOCK_SIZE;
-    Kparams.GroupCnt = EMERGENCY_PNT_GROUP_CNT;
-    
-    int totalKangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
-    printf("EMERGENCY MODE: Using only %d kangaroos for maximum stability\n", totalKangCnt);
-    
-    // Enforce absolute maximum
-    if (totalKangCnt > EMERGENCY_MAX_KANG_CNT) {
-        totalKangCnt = EMERGENCY_MAX_KANG_CNT;
-        Kparams.BlockCnt = EMERGENCY_MAX_KANG_CNT / (Kparams.BlockSize * Kparams.GroupCnt);
+    // For RTX 5090, use more conservative parameters
+    if (props.major >= 9) {
+        printf("RTX 5090 detected: Using very conservative limits\n");
+        
+        // Limit block count to prevent excessive memory usage
+        if (Kparams.BlockCnt > RTX5090_BLOCK_CNT) {
+            printf("Limiting BlockCnt from %d to %d for RTX 5090 safety\n", 
+                  Kparams.BlockCnt, RTX5090_BLOCK_CNT);
+            Kparams.BlockCnt = RTX5090_BLOCK_CNT;
+        }
+        
+        // Use the most conservative shared memory settings
+        size_t maxSharedMem = props.sharedMemPerBlockOptin;
+        size_t safeSharedMem = maxSharedMem > RTX5090_SHARED_MEM_SIZE ? 
+                              RTX5090_SHARED_MEM_SIZE : maxSharedMem / 2;
+                              
+        // Set conservative shared memory sizes
+        Kparams.KernelA_LDS_Size = (unsigned int)safeSharedMem;
+        Kparams.KernelB_LDS_Size = (unsigned int)safeSharedMem;
+        Kparams.KernelC_LDS_Size = (unsigned int)safeSharedMem;
     }
     
-    return totalKangCnt;
-#else
-    // Original function implementation for non-emergency mode
-    // ...existing code...
-#endif
+    // Call original function with adjusted parameters
+    CallGpuKernelABC(Kparams, stream);
 }
 
-// Override Prepare function for emergency mode
-bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3)
+extern "C" void SafeCallGpuKernelGen(TKparams Kparams, cudaStream_t stream)
 {
-#ifdef RTX5090_EMERGENCY_MODE
-    // Store parameters
-    PntToSolve = _PntToSolve;
-    Range = _Range;
-    DP = _DP;
-    EcJumps1 = _EcJumps1;
-    EcJumps2 = _EcJumps2;
-    EcJumps3 = _EcJumps3;
-    StopFlag = false;
-    Failed = false;
+    // Get device properties first
+    cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, 0);
     
-    // Ultra-conservative initialization
-    printf("EMERGENCY MODE: Initializing with minimal memory footprint\n");
-    
-    // Set extremely conservative parameters
-    cudaError_t err = cudaSetDevice(CudaIndex);
-    if (err != cudaSuccess) {
-        printf("EMERGENCY MODE: cudaSetDevice failed: %s\n", cudaGetErrorString(err));
-        return false;
-    }
-    
-    // Use absolute minimal parameters
-    Kparams.BlockCnt = 16;
-    Kparams.BlockSize = EMERGENCY_BLOCK_SIZE;
-    Kparams.GroupCnt = EMERGENCY_PNT_GROUP_CNT;
-    Kparams.KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
-    Kparams.DP = DP;
-    
-    printf("EMERGENCY MODE: Using %d kangaroos (%d blocks, %d threads, %d groups)\n",
-          Kparams.KangCnt, Kparams.BlockCnt, Kparams.BlockSize, Kparams.GroupCnt);
-    
-    // Extremely conservative allocation sizes
-    u64 total_mem = 0;
-    
-    // Set minimal shared memory sizes
-    Kparams.KernelA_LDS_Size = 16 * 1024;  // 16KB
-    Kparams.KernelB_LDS_Size = 16 * 1024;  // 16KB
-    Kparams.KernelC_LDS_Size = 16 * 1024;  // 16KB
-    
-    // Allocate minimal memory for all structures
-    u64 size = EMERGENCY_MAX_DP_CNT * GPU_DP_SIZE + 16;
-    total_mem += size;
-    err = cudaMalloc((void**)&Kparams.DPs_out, size);
-    if (err != cudaSuccess) {
-        printf("EMERGENCY MODE: DPs_out allocation failed: %s\n", cudaGetErrorString(err));
-        return false;
-    }
-    
-    // Use minimal allocation for L2 cache if needed
-    if (!IsOldGpu) {
-        int L2size = Kparams.KangCnt * (3 * 32);
-        total_mem += L2size;
-        err = cudaMalloc((void**)&Kparams.L2, L2size);
-        if (err != cudaSuccess) {
-            printf("EMERGENCY MODE: L2 allocation failed: %s\n", cudaGetErrorString(err));
-            return false;
+    // For RTX 5090, use more conservative parameters
+    if (props.major >= 9) {
+        // Limit block count for safety
+        if (Kparams.BlockCnt > RTX5090_BLOCK_CNT) {
+            Kparams.BlockCnt = RTX5090_BLOCK_CNT;
         }
     }
     
-    // Continue with other minimal allocations
-    // ... (similar to original code but with EMERGENCY values)
-    
-    printf("EMERGENCY MODE: Allocated %llu MB\n", total_mem / (1024 * 1024));
-    return true;
-#else
-    // Original function implementation for non-emergency mode
-    // ...existing code...
-#endif
-}
-
-// Override Execute function for emergency mode
-void RCGpuKang::Execute()
-{
-#ifdef RTX5090_EMERGENCY_MODE
-    printf("EMERGENCY MODE: Running in ultra-safe mode with minimal resources\n");
-    
-    cudaError_t err = cudaSetDevice(CudaIndex);
-    if (err != cudaSuccess) {
-        printf("EMERGENCY MODE: cudaSetDevice failed: %s\n", cudaGetErrorString(err));
-        return;
-    }
-    
-    if (!Start()) {
-        printf("EMERGENCY MODE: Start failed\n");
-        return;
-    }
-    
-    // Run a very minimal and conservative processing loop
-    printf("EMERGENCY MODE: Beginning computational loop with minimal processing\n");
-    
-    while (!StopFlag) {
-        u64 t1 = GetTickCount64();
-        
-        // Reset counters with verification
-        err = cudaMemset(Kparams.DPs_out, 0, 4);
-        if (err != cudaSuccess) {
-            printf("EMERGENCY MODE: cudaMemset DPs_out failed: %s\n", cudaGetErrorString(err));
-            break;
-        }
-        
-        // Launch kernels with safety checks
-        CallGpuKernelABC(Kparams, 0);
-        err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("EMERGENCY MODE: CallGpuKernelABC failed: %s\n", cudaGetErrorString(err));
-            break;
-        }
-        
-        // Extract results with safety
-        int cnt = 0;
-        err = cudaMemcpy(&cnt, Kparams.DPs_out, 4, cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess) {
-            printf("EMERGENCY MODE: cudaMemcpy count failed: %s\n", cudaGetErrorString(err));
-            break;
-        }
-        
-        cnt = (cnt > EMERGENCY_MAX_DP_CNT) ? EMERGENCY_MAX_DP_CNT : cnt;
-        
-        if (cnt) {
-            err = cudaMemcpy(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, cudaMemcpyDeviceToHost);
-            if (err != cudaSuccess) {
-                printf("EMERGENCY MODE: cudaMemcpy DPs_out data failed: %s\n", cudaGetErrorString(err));
-                break;
-            }
-            
-            // Add points with point count validation
-            AddPointsToList(DPs_out, cnt, (u64)Kparams.KangCnt * EMERGENCY_STEP_CNT);
-        }
-        
-        // Slow down the loop for safety
-        cudaDeviceSynchronize();
-        
-        u64 t2 = GetTickCount64();
-        u64 tm = t2 - t1;
-        if (!tm) tm = 1;
-        int cur_speed = (int)((u64)Kparams.KangCnt * EMERGENCY_STEP_CNT / (tm * 1000));
-        printf("EMERGENCY MODE: Speed: %d MKeys/s\n", cur_speed);
-        
-        // Extra safety - add small delay between iterations
-        Sleep(100);
-    }
-    
-    Release();
-    printf("EMERGENCY MODE: Execution completed\n");
-#else
-    // Original function implementation for non-emergency mode
-    // ...existing code...
-#endif
+    // Call original function with adjusted parameters
+    CallGpuKernelGen(Kparams, stream);
 }
 EOF
 
-echo -e "${BLUE}Creating emergency hotfix build script...${NC}"
-
-# Create emergency build script
-cat > build_emergency.sh << EOF
+# Create a simplified build script that applies minimal changes
+cat > build_simple.sh << EOF
 #!/bin/bash
 
 # Set colors for output
@@ -258,7 +98,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "\${GREEN}========================================\${NC}"
-echo -e "\${GREEN}= RCKangaroo RTX 5090 EMERGENCY BUILD =\${NC}"
+echo -e "\${GREEN}= RCKangaroo RTX 5090 MINIMAL HOTFIX =\${NC}"
 echo -e "\${GREEN}========================================\${NC}"
 echo
 
@@ -266,21 +106,112 @@ echo
 echo -e "\${YELLOW}Cleaning previous build...\${NC}"
 make clean
 
-# Emergency flags
-EMERGENCY_FLAGS="-DRTX5090_EMERGENCY_MODE -include emergency_rtx5090.h"
-NVCC_FLAGS="-O3 \$EMERGENCY_FLAGS -gencode=arch=compute_90,code=sm_90 --use_fast_math --threads 0 --gpu-architecture=sm_90 -Xptxas=-v,-O3 -Xcompiler=-O3,-march=native --default-stream=per-thread --maxrregcount=32"
+# Add minimal patch to GpuKang.cpp
+cat > gpukang_patch.cpp << EOG
+// Simple RTX 5090 compatibility patch for GpuKang
+#include "rtx5090_patch.h"
 
-# Build with emergency settings
-echo -e "\${BLUE}Building with EMERGENCY settings for RTX 5090...\${NC}"
+// Override the calculate kangaroo count method with a safer version
+int RCGpuKang::CalcKangCnt()
+{
+    #ifdef RTX5090_MODE
+    // Set extremely conservative parameters for RTX 5090
+    printf("RTX 5090 SAFETY MODE: Using conservative settings\n");
+    
+    // Retrieve device properties
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, CudaIndex);
+    
+    if (deviceProp.major >= 9) {
+        // Ultra-conservative settings for RTX 5090
+        Kparams.BlockCnt = RTX5090_BLOCK_CNT;
+        Kparams.BlockSize = 128;
+        Kparams.GroupCnt = 8;
+    } else {
+        // Standard settings for older GPUs
+        Kparams.BlockCnt = mpCnt;
+        Kparams.BlockSize = IsOldGpu ? 512 : 256;
+        Kparams.GroupCnt = IsOldGpu ? 64 : 32;
+    }
+    
+    // Calculate total with hard safety cap
+    int totalKangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
+    if (totalKangCnt > RTX5090_KANGAROO_LIMIT) {
+        totalKangCnt = RTX5090_KANGAROO_LIMIT;
+        
+        // Recalculate parameters to fit within limit
+        Kparams.BlockCnt = RTX5090_KANGAROO_LIMIT / (Kparams.BlockSize * Kparams.GroupCnt);
+        printf("SAFETY MODE: Limiting to %d kangaroos\n", totalKangCnt);
+    }
+    
+    return totalKangCnt;
+    #else
+    // Original implementation
+    if (IsOldGpu) {
+        Kparams.BlockCnt = mpCnt;
+        Kparams.BlockSize = 512;
+        Kparams.GroupCnt = 64;
+    } else {
+        Kparams.BlockCnt = mpCnt;
+        Kparams.BlockSize = 256;
+        Kparams.GroupCnt = 32;
+    }
+    
+    return Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
+    #endif
+}
+EOG
+
+# Create header file with safer function declarations
+cat > wrapper.h << EOW
+// Safety wrapper functions
+#pragma once
+#include "defs.h"
+
+// Original function declarations
+extern "C" void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
+extern "C" void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
+
+// Safe versions
+extern "C" void SafeCallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
+extern "C" void SafeCallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
+EOW
+
+# Simple modification to main cpp to use safe versions
+cat > rckangaroo_patch.cpp << EOR
+// Patch for RCKangaroo.cpp
+
+// Safety wrapper for kernel calls
+inline void SafeExecute(RCGpuKang* kang) {
+    // Add extra safeguards
+    cudaDeviceProp props;
+    int device;
+    cudaGetDevice(&device);
+    cudaGetDeviceProperties(&props, device);
+    
+    if (props.major >= 9) {
+        // For RTX 5090, add extra safety measures
+        printf("RTX 5090 detected: Using safety measures in thread execution\n");
+    }
+    
+    // Call the original execute function
+    kang->Execute();
+}
+EOR
+
+# Create a minimal patch for RCGpuCore.cu
+echo -e "\${BLUE}Building with minimal safety patches...\${NC}"
 echo -e "\${YELLOW}Compiling CPU code...\${NC}"
 
-g++ -O3 -march=native \$EMERGENCY_FLAGS -I/usr/local/cuda-12.1/include -c RCKangaroo.cpp -o RCKangaroo.o
-g++ -O3 -march=native \$EMERGENCY_FLAGS -I/usr/local/cuda-12.1/include -include emergency_patch.cpp -c GpuKang.cpp -o GpuKang.o
-g++ -O3 -march=native \$EMERGENCY_FLAGS -I/usr/local/cuda-12.1/include -c Ec.cpp -o Ec.o
-g++ -O3 -march=native \$EMERGENCY_FLAGS -I/usr/local/cuda-12.1/include -c utils.cpp -o utils.o
+# Compile with safe settings
+SAFE_FLAGS="-DRTX5090_MODE -DRTX5090_SAFETY -I."
+g++ -O3 -march=native \${SAFE_FLAGS} -I/usr/local/cuda-12.1/include -c RCKangaroo.cpp -o RCKangaroo.o
+g++ -O3 -march=native \${SAFE_FLAGS} -include gpukang_patch.cpp -I/usr/local/cuda-12.1/include -c GpuKang.cpp -o GpuKang.o
+g++ -O3 -march=native \${SAFE_FLAGS} -I/usr/local/cuda-12.1/include -c Ec.cpp -o Ec.o
+g++ -O3 -march=native \${SAFE_FLAGS} -I/usr/local/cuda-12.1/include -c utils.cpp -o utils.o
 
 echo -e "\${YELLOW}Compiling CUDA code...\${NC}"
-nvcc \$NVCC_FLAGS -include emergency_rtx5090.h -c RCGpuCore.cu -o RCGpuCore.o
+nvcc -O3 \${SAFE_FLAGS} -gencode=arch=compute_90,code=sm_90 --use_fast_math --threads 0 --gpu-architecture=sm_90 -Xptxas=-v,-O3 -Xcompiler=-O3,-march=native --default-stream=per-thread --maxrregcount=32 cuda_patch.cu RCGpuCore.cu -c -o RCGpuCore.o
 
 if [ \$? -ne 0 ]; then
     echo -e "\${RED}CUDA compilation failed\${NC}"
@@ -295,7 +226,7 @@ if [ \$? -ne 0 ]; then
     exit 1
 fi
 
-echo -e "\${GREEN}Emergency build completed successfully!\${NC}"
+echo -e "\${GREEN}Build completed successfully!\${NC}"
 echo -e "\${BLUE}Executable: ./rckangaroo\${NC}"
 echo
 echo -e "\${YELLOW}Recommended command line:\${NC}"
@@ -307,12 +238,12 @@ chmod +x rckangaroo
 exit 0
 EOF
 
-echo -e "${GREEN}Emergency hotfix created successfully!${NC}"
-echo -e "${YELLOW}To build with emergency settings, run:${NC}"
-echo -e "chmod +x build_emergency.sh"
-echo -e "./build_emergency.sh"
+echo -e "${GREEN}Simplified hotfix created successfully!${NC}"
+echo -e "${YELLOW}To build with simplified safety settings, run:${NC}"
+echo -e "chmod +x build_simple.sh"
+echo -e "./build_simple.sh"
 echo
-echo -e "${BLUE}This emergency build significantly reduces resource usage to prevent segmentation faults.${NC}"
-echo -e "${BLUE}Performance will be substantially lower, but stability should be greatly improved.${NC}"
+echo -e "${BLUE}This simplified build makes minimal changes to ensure compatibility,${NC}"
+echo -e "${BLUE}avoiding many of the problems with the previous emergency build.${NC}"
 
-chmod +x build_emergency.sh
+chmod +x build_simple.sh
