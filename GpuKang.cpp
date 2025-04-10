@@ -10,20 +10,21 @@
 
 #include "GpuKang.h"
 
-cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
-void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream = 0);
-void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream = 0);
+// Remove these declarations that have default parameters
+// cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
+// void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream = 0);
+// void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream = 0);
+
+// Keep only the extern "C" declarations
+extern "C" void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
+extern "C" void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
+extern "C" cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
 
 // Add CUDA stream declarations
 cudaStream_t computeStream;
 cudaStream_t memoryStream;
-
-// External CUDA function declarations
-extern "C" void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
-extern "C" void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
-extern "C" cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
 
 // Calculate GPU score - RTX 5090 optimized calculation
 static u32 get_gpu_score(cudaDeviceProp* props)

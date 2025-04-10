@@ -7,6 +7,13 @@
 #include "defs.h"
 #include "RCGpuUtils.h"
 
+#if defined(__CUDA_ARCH__)
+#define printf(fmt, ...) // Disable printf in device code
+#else
+// Include proper header for printf in host code
+#include <stdio.h>
+#endif
+
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
