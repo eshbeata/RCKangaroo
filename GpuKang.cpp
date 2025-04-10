@@ -119,8 +119,10 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 
     cudaError_t err;
     err = cudaSetDevice(CudaIndex);
-    if (err != cudaSuccess)
+    if (err != cudaSuccess) {
+        printf("GPU %d, cudaSetDevice failed: %s\n", CudaIndex, cudaGetErrorString(err));
         return false;
+    }
     
     // Create CUDA streams for better concurrency
     err = cudaStreamCreate(&computeStream);
@@ -155,7 +157,13 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 
     // For RTX 5090, optimize memory settings
     cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, CudaIndex);
+    err = cudaGetDeviceProperties(&deviceProp, CudaIndex);
+    if (err != cudaSuccess) {
+        printf("GPU %d, failed to get device properties: %s\n", CudaIndex, cudaGetErrorString(err));
+        cudaStreamDestroy(computeStream);
+        cudaStreamDestroy(memoryStream);
+        return false;
+    }
     
     // Determine safe parameters for RTX 5090
     if (deviceProp.major >= 9) {
@@ -184,7 +192,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
     
     // Safety check - hard limit on kangaroo count
-    const u64 MAX_SAFE_KANG_CNT = 800000; // Significantly reduced limit to avoid segfault
+    const u64 MAX_SAFE_KANG_CNT = 250000; // Significantly reduced limit to avoid segfault
     if (KangCnt > MAX_SAFE_KANG_CNT) {
         printf("Warning: Reducing kangaroo count from %d to %llu to prevent memory issues\n", 
                KangCnt, MAX_SAFE_KANG_CNT);
@@ -211,7 +219,12 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     Kparams.KernelC_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.5);
     Kparams.IsGenMode = gGenMode;
 
-    // Rest of the memory allocation code...
+    // Allocate memory with safe sizes for RTX 5090
+    // Use a significantly reduced MAX_DP_CNT value for RTX 5090 to limit memory usage
+    int effectiveMaxDpCnt = MAX_DP_CNT;
+    if (!IsOldGpu && deviceProp.major >= 9) {
+        effectiveMaxDpCnt = 16384; // Use a smaller value for RTX 5090
+    }
     
     //allocate gpu mem
     u64 size;
@@ -230,7 +243,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     }
     
     // Allocate memory with safe sizes for RTX 5090
-    size = MAX_DP_CNT * GPU_DP_SIZE + 16;
+    size = effectiveMaxDpCnt * GPU_DP_SIZE + 16;
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.DPs_out, size);
     if (err != cudaSuccess)
@@ -290,12 +303,17 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     }
 
     // For RTX 5090, we need to limit the DP table size
-    size = (u64)KangCnt * (16 * DPTABLE_MAX_CNT + sizeof(u32)); 
+    int effectiveDpTableMaxCnt = DPTABLE_MAX_CNT;
+    if (!IsOldGpu && deviceProp.major >= 9) {
+        effectiveDpTableMaxCnt = 8; // Significantly reduced from default
+    }
+    
+    size = (u64)KangCnt * (16 * effectiveDpTableMaxCnt + sizeof(u32)); 
     // Add a safety check for excessively large allocations
-    if (size > 4ULL * 1024 * 1024 * 1024) { // If over 4GB
+    if (size > 2ULL * 1024 * 1024 * 1024) { // If over 2GB
         printf("Warning: DP table size is very large (%llu GB), reducing to prevent segfault\n", 
                size / (1024 * 1024 * 1024));
-        size = 4ULL * 1024 * 1024 * 1024; // Limit to 4GB
+        size = 2ULL * 1024 * 1024 * 1024; // Limit to 2GB
     }
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.DPTable, size);
@@ -356,7 +374,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     }
 
     // Allocate host memory with error checking
-    DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
+    DPs_out = (u32*)malloc(effectiveMaxDpCnt * GPU_DP_SIZE);
     if (DPs_out == NULL) {
         printf("Failed to allocate host memory for DPs_out\n");
         return false;

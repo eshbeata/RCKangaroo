@@ -21,6 +21,10 @@ extern "C" {
     void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
 }
 
+// Add memory validation before access
+#define VALIDATE_MEMORY(ptr, msg) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return; }
+#define VALIDATE_MEMORY_CUDA(ptr, msg, err_ret) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return err_ret; }
+
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
