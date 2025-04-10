@@ -10,6 +10,7 @@
 
 #include "GpuKang.h"
 #include "RCGpuCore.cu" // Include the file where KernelA, KernelB, and KernelC are defined
+#include "RCGpuCore.h" // Include the header file for kernel declarations
 
 // Ensure BLOCK_CNT and BLOCK_SIZE are defined
 #ifndef BLOCK_CNT
@@ -22,7 +23,6 @@
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
 void CallGpuKernelGen(TKparams Kparams);
-void CallGpuKernelABC(TKparams Kparams);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
 
