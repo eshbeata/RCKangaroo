@@ -5,6 +5,7 @@ CUDA_PATH ?= /usr/local/cuda
 # Flags for optimized compilation
 CCFLAGS := -O3 -march=native -I$(CUDA_PATH)/include
 # Enhanced CUDA flags targeting RTX 5090 (compute capability 9.0)
+# Removed relocatable-device-code which is causing linking issues
 NVCCFLAGS := -O3 \
     -gencode=arch=compute_90,code=sm_90 \
     -gencode=arch=compute_89,code=sm_89 \
@@ -15,7 +16,6 @@ NVCCFLAGS := -O3 \
     -Xptxas="-v,-O3" \
     -Xcompiler="-O3,-march=native" \
     --default-stream=per-thread \
-    --relocatable-device-code=true \
     --maxrregcount=64
 
 LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -pthread
