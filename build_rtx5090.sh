@@ -43,16 +43,16 @@ EOF
 # Create build script
 echo -e "${BLUE}Creating optimized CUDA flags...${NC}"
 
-# Add optimization flags to the build
-NVCC_FLAGS="-O3 -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -gencode=arch=compute_90,code=sm_90 --use_fast_math --threads 0 --gpu-architecture=sm_90 -Xptxas=\"-v,-O3\" -Xcompiler=\"-O3,-march=native\" --default-stream=per-thread --maxrregcount=64"
+# Add optimization flags to the build - fixing quote issue
+NVCC_FLAGS="-O3 -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -gencode=arch=compute_90,code=sm_90 --use_fast_math --threads 0 --gpu-architecture=sm_90 -Xptxas=-v,-O3 -Xcompiler=-O3,-march=native --default-stream=per-thread --maxrregcount=64"
 
 # Build with optimized settings
 echo -e "${BLUE}Building with RTX 5090 optimizations...${NC}"
 echo -e "${YELLOW}Compiling CPU code...${NC}"
-g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda/include -c RCKangaroo.cpp -o RCKangaroo.o
-g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda/include -c GpuKang.cpp -o GpuKang.o
-g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda/include -c Ec.cpp -o Ec.o
-g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda/include -c utils.cpp -o utils.o
+g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda-12.1/include -c RCKangaroo.cpp -o RCKangaroo.o
+g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda-12.1/include -c GpuKang.cpp -o GpuKang.o
+g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda-12.1/include -c Ec.cpp -o Ec.o
+g++ -O3 -march=native -DRTX5090_MODE -DOPTIMIZE_FOR_RTX5090 -I/usr/local/cuda-12.1/include -c utils.cpp -o utils.o
 
 echo -e "${YELLOW}Compiling CUDA code...${NC}"
 nvcc $NVCC_FLAGS -c RCGpuCore.cu -o RCGpuCore.o
@@ -63,7 +63,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo -e "${YELLOW}Linking final executable...${NC}"
-g++ -O3 -march=native -I/usr/local/cuda/include -o rckangaroo RCKangaroo.o GpuKang.o Ec.o utils.o RCGpuCore.o -L/usr/local/cuda/lib64 -lcudart -pthread
+g++ -O3 -march=native -I/usr/local/cuda-12.1/include -o rckangaroo RCKangaroo.o GpuKang.o Ec.o utils.o RCGpuCore.o -L/usr/local/cuda-12.1/lib64 -lcudart -pthread
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}Build failed${NC}"
