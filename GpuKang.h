@@ -34,6 +34,7 @@ public:
 	void Release();
 	bool Start();
 	int GetStatsSpeed();
+	int CalcKangCnt(); // Moved from private to public
 
 public:
 	int CudaIndex;
@@ -73,7 +74,6 @@ public:
 	bool StopFlag;
 
 private:
-	int CalcKangCnt();
 	void GenerateRndDistances();
 #ifdef DEBUG_MODE
 	int Dbg_CheckKangs();
