@@ -26,25 +26,13 @@ u64 _umul128(u64 m1, u64 m2, u64* hi)
     uint128_t ab = (uint128_t)m1 * m2; *hi = (u64)(ab >> 64); return (u64)ab; 
 }
 
-u64 __shiftright128 (u64 LowPart, u64 HighPart, u8 Shift)
-{
-   u64 ret;
-   __asm__ ("shrd {%[Shift],%[HighPart],%[LowPart]|%[LowPart], %[HighPart], %[Shift]}" 
-      : [ret] "=r" (ret)
-      : [LowPart] "0" (LowPart), [HighPart] "r" (HighPart), [Shift] "Jc" (Shift)
-      : "cc");
-   return ret;
+u64 __shiftright128(u64 LowPart, u64 HighPart, unsigned int Shift) {
+    return (HighPart >> Shift) | (LowPart << (64 - Shift));
 }
 
-u64 __shiftleft128 (u64 LowPart, u64 HighPart, u8 Shift)
-{
-   u64 ret;
-   __asm__ ("shld {%[Shift],%[LowPart],%[HighPart]|%[HighPart], %[LowPart], %[Shift]}" 
-      : [ret] "=r" (ret)
-      : [LowPart] "r" (LowPart), [HighPart] "0" (HighPart), [Shift] "Jc" (Shift)
-      : "cc");
-   return ret;
-}   
+u64 __shiftleft128(u64 LowPart, u64 HighPart, unsigned int Shift) {
+    return (LowPart << Shift) | (HighPart >> (64 - Shift));
+}
 
 u64 GetTickCount64()
 {
