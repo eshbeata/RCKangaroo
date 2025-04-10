@@ -93,5 +93,6 @@ struct TKparams
 	u32 KernelA_LDS_Size;
 	u32 KernelB_LDS_Size;
 	u32 KernelC_LDS_Size;	
+	u64 gEnd; // Added to represent the end range for kangaroo initialization
 };
 
