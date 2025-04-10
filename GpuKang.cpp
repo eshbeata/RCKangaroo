@@ -7,6 +7,7 @@
 #include <iostream>
 #include "cuda_runtime.h"
 #include "cuda.h"
+#include <time.h> // For nanosleep
 
 #include "GpuKang.h"
 
@@ -26,79 +27,81 @@ extern bool gGenMode; //tames generation mode
 cudaStream_t computeStream;
 cudaStream_t memoryStream;
 
-// Calculate GPU score - RTX 5090 optimized calculation
-static u32 get_gpu_score(cudaDeviceProp* props)
-{
-	u32 w = props->multiProcessorCount * 12;
+// Define the RTX 5090 detection function (was missing earlier)
+static bool isRTX5090(int cudaIndex) {
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, cudaIndex);
     
-    // Enhanced support for RTX 5090
-    if (props->major >= 9) {
-        printf("RTX 5090 or newer GPU architecture detected (compute capability %d.%d)\n", 
-               props->major, props->minor);
-        // For RTX 5090, use improved scoring formula
-        w = (u32)(props->multiProcessorCount * 14);
+    // Check for RTX 5090 based on compute capability or device name
+    bool isRTX5090 = (deviceProp.major >= 9) || 
+                     (strstr(deviceProp.name, "RTX 50") != NULL);
+    
+    if (isRTX5090) {
+        printf("RTX 5090 or similar detected (compute capability %d.%d). Adjusting parameters...\n", 
+              deviceProp.major, deviceProp.minor);
     }
     
-	return w;
+    return isRTX5090;
 }
 
-// Check if we have an RTX 5090 or newer
-static bool isRTX5090OrNewer(cudaDeviceProp* props) {
-    return (props->major >= 9 || 
-           (props->major == 8 && props->minor >= 9) || 
-           (strstr(props->name, "RTX 50") != NULL));
+RCGpuKang::RCGpuKang(int _gpuInd, u32 _score, bool _IsOldGpu, int _mp_cnt)
+{
+	CudaIndex = _gpuInd;
+	Score = _score;
+	IsOldGpu = _IsOldGpu;
+	mpCnt = _mp_cnt;
+	Failed = false;
+}
+
+RCGpuKang::~RCGpuKang()
+{
 }
 
 int RCGpuKang::CalcKangCnt()
 {
-    // Determine optimal parameters based on GPU type
-    if (IsOldGpu) {
-        // Parameters for older GPUs remain unchanged
-        Kparams.BlockCnt = mpCnt;
-        Kparams.BlockSize = 512;
-        Kparams.GroupCnt = 64;
-    } else {
-        // Optimized parameters for RTX 5090
-        cudaDeviceProp deviceProp;
-        cudaGetDeviceProperties(&deviceProp, CudaIndex);
+    // Check if using RTX 5090
+    bool rtx5090_mode = isRTX5090(CudaIndex);
+    
+    if (rtx5090_mode) {
+        // EXTREME RESOURCE LIMITATION FOR RTX 5090
+        printf("RTX 5090 COMPATIBILITY MODE: Using ultra-conservative settings\n");
         
-        if (deviceProp.major >= 9) {
-            printf("Optimizing kernel parameters for RTX 5090...\n");
+        // Drastically reduced numbers for RTX 5090
+        Kparams.BlockCnt = 2;        // Extremely limited block count
+        Kparams.BlockSize = 64;      // Very small block size
+        Kparams.GroupCnt = 4;        // Minimal group count
+        
+        // Calculate with ultra-conservative limits
+        int total = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
+        const int ULTRA_SAFE_LIMIT = 2048; // Extremely conservative limit
+        
+        if (total > ULTRA_SAFE_LIMIT) {
+            printf("RTX 5090 COMPATIBILITY MODE: Further limiting from %d to %d kangaroos\n", 
+                   total, ULTRA_SAFE_LIMIT);
+            total = ULTRA_SAFE_LIMIT;
             
-            // For RTX 5090, we need to be more conservative with memory usage
-            // and optimize for the architecture
-            Kparams.BlockCnt = mpCnt > 80 ? 80 : mpCnt; // Limit SM usage
-            Kparams.BlockSize = 256; // Better for L1 cache utilization 
-            
-            // For high SM count like RTX 5090 (170 SMs)
-            printf("Using high-density configuration for %d SMs\n", mpCnt);
-            Kparams.GroupCnt = 16;  // Significantly reduced from original 64/32
-            
-            // Calculate estimated DPs per kangaroo for display purposes
-            float estDPsPerKang = powf(2.0f, (float)(64 - Kparams.DP));
-            printf("Estimated DPs per kangaroo: %.3f.\n", estDPsPerKang);
+            // Recalculate block count to fit within ultra safe limit
+            Kparams.BlockCnt = ULTRA_SAFE_LIMIT / (Kparams.BlockSize * Kparams.GroupCnt);
+            if (Kparams.BlockCnt < 1) Kparams.BlockCnt = 1;
+        }
+        
+        printf("RTX 5090 COMPATIBILITY MODE: Using %d blocks x %d threads x %d groups = %d kangaroos\n",
+               Kparams.BlockCnt, Kparams.BlockSize, Kparams.GroupCnt, 
+               Kparams.BlockCnt * Kparams.BlockSize * Kparams.GroupCnt);
+        
+        return Kparams.BlockCnt * Kparams.BlockSize * Kparams.GroupCnt;
+    } else {
+        if (IsOldGpu) {
+            Kparams.BlockCnt = mpCnt;
+            Kparams.BlockSize = 512;
+            Kparams.GroupCnt = 64;
         } else {
-            // For RTX 3000/4000 series
             Kparams.BlockCnt = mpCnt;
             Kparams.BlockSize = 256;
             Kparams.GroupCnt = 32;
         }
+        return Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
     }
-    
-    // Calculate total kangaroo count with hard ceiling
-    int totalKangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
-    const int MAX_SAFE_KANG_CNT = 1000000; // Hard limit to prevent segfault
-    
-    if (totalKangCnt > MAX_SAFE_KANG_CNT) {
-        printf("Limiting BlockCnt to prevent excessive memory usage\n");
-        totalKangCnt = MAX_SAFE_KANG_CNT;
-        
-        // Recalculate parameter to fit within limit
-        Kparams.BlockCnt = MAX_SAFE_KANG_CNT / (Kparams.BlockSize * Kparams.GroupCnt);
-        printf("Adjusted BlockCnt to %d\n", Kparams.BlockCnt);
-    }
-    
-    return Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
 }
 
 //executes in main thread
@@ -138,94 +141,55 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
         return false;
     }
 
-    // Set stream priorities with error checking
-    int priority_high, priority_low;
-    err = cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
-    if (err != cudaSuccess) {
-        printf("Warning: Could not get stream priority range: %s\n", cudaGetErrorString(err));
-        // Continue anyway with default priorities
+    // Check if using RTX 5090
+    bool rtx5090_mode = isRTX5090(CudaIndex);
+    
+    // For RTX 5090, use extreme conservative settings
+    if (rtx5090_mode) {
+        // Extremely reduced values for RTX 5090
+        KangCnt = CalcKangCnt(); // This will call our optimized function with limits
     } else {
-        cudaStream_t temp_stream;
-        err = cudaStreamCreateWithPriority(&temp_stream, cudaStreamNonBlocking, priority_high);
-        if (err == cudaSuccess) {
-            cudaStreamDestroy(computeStream);
-            computeStream = temp_stream;
-        } else {
-            printf("Warning: Failed to set compute stream priority: %s\n", cudaGetErrorString(err));
-        }
+        KangCnt = CalcKangCnt();
     }
-
-    // For RTX 5090, optimize memory settings
+    
+    // Get device properties to determine shared memory limits
     cudaDeviceProp deviceProp;
-    err = cudaGetDeviceProperties(&deviceProp, CudaIndex);
-    if (err != cudaSuccess) {
-        printf("GPU %d, failed to get device properties: %s\n", CudaIndex, cudaGetErrorString(err));
-        cudaStreamDestroy(computeStream);
-        cudaStreamDestroy(memoryStream);
-        return false;
-    }
+    cudaGetDeviceProperties(&deviceProp, CudaIndex);
     
-    // Determine safe parameters for RTX 5090
-    if (deviceProp.major >= 9) {
-        printf("Setting conservative parameters for RTX 5090 to avoid memory issues...\n");
-        
-        // For RTX 5090, limit block count to prevent excessive memory usage
-        if (mpCnt > 100) {
-            Kparams.BlockCnt = 60; // Much more conservative limit
-            printf("Limiting BlockCnt to %d (from %d SMs) to prevent excessive memory usage\n", 
-                   Kparams.BlockCnt, mpCnt);
-        } else {
-            Kparams.BlockCnt = mpCnt;
-        }
-        
-        // Use balanced values for BlockSize and GroupCnt
-        Kparams.BlockSize = 256;
-        Kparams.GroupCnt = 12; // Further reduced for safety
+    // Set shared memory sizes conservatively for all GPUs
+    size_t maxSharedMemPerBlock = deviceProp.sharedMemPerBlock;
+    printf("Device max shared memory per block (with safety margin): %zu bytes\n", maxSharedMemPerBlock);
+    
+    if (rtx5090_mode) {
+        // Use tiny portions of shared memory for RTX 5090
+        Kparams.KernelA_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.2);
+        Kparams.KernelB_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.2);
+        Kparams.KernelC_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.2);
     } else {
-        // For non-RTX 5090 GPUs, use standard parameters
-        Kparams.BlockCnt = mpCnt;
-        Kparams.BlockSize = IsOldGpu ? 512 : 256;
-        Kparams.GroupCnt = IsOldGpu ? 64 : 32;
+        // Normal settings for other GPUs
+        Kparams.KernelA_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.6);
+        Kparams.KernelB_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.5);
+        Kparams.KernelC_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.5);
     }
     
-    // Calculate safe kangaroo count
-    KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
-    
-    // Safety check - hard limit on kangaroo count
-    const u64 MAX_SAFE_KANG_CNT = 250000; // Significantly reduced limit to avoid segfault
-    if (KangCnt > MAX_SAFE_KANG_CNT) {
-        printf("Warning: Reducing kangaroo count from %d to %llu to prevent memory issues\n", 
-               KangCnt, MAX_SAFE_KANG_CNT);
-        KangCnt = MAX_SAFE_KANG_CNT;
-        
-        // Recalculate parameters to match the reduced KangCnt
-        Kparams.GroupCnt = static_cast<u32>(KangCnt / (Kparams.BlockSize * Kparams.BlockCnt));
-        if (Kparams.GroupCnt < 8) {
-            Kparams.GroupCnt = 8;
-            Kparams.BlockCnt = static_cast<u32>(KangCnt / (Kparams.BlockSize * Kparams.GroupCnt));
-        }
-    }
-    
-    // Set kernel parameters
     Kparams.KangCnt = KangCnt;
     Kparams.DP = DP;
-    
-    // For RTX 5090, set strict shared memory sizes with good safety margins
-    size_t maxSharedMemPerBlock = deviceProp.sharedMemPerBlock;
-    
-    // Calculate shared memory sizes with very conservative safety margins
-    Kparams.KernelA_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.6);
-    Kparams.KernelB_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.5);
-    Kparams.KernelC_LDS_Size = (unsigned int)(maxSharedMemPerBlock * 0.5);
     Kparams.IsGenMode = gGenMode;
 
-    // Allocate memory with safe sizes for RTX 5090
-    // Use a significantly reduced MAX_DP_CNT value for RTX 5090 to limit memory usage
+    // For RTX 5090, use drastically smaller sizes
     int effectiveMaxDpCnt = MAX_DP_CNT;
-    if (!IsOldGpu && deviceProp.major >= 9) {
-        effectiveMaxDpCnt = 16384; // Use a smaller value for RTX 5090
-    }
+    int effectiveStepCnt = STEP_CNT;
+    int effectiveDpTableMaxCnt = DPTABLE_MAX_CNT;
+    int effectiveMdLen = MD_LEN;
     
+    if (rtx5090_mode) {
+        // Extremely reduced values
+        effectiveMaxDpCnt = 1024;    // Ultra small
+        effectiveStepCnt = 32;       // Ultra small
+        effectiveDpTableMaxCnt = 2;  // Ultra small
+        effectiveMdLen = 4;          // Reduced
+    }
+
     //allocate gpu mem
     u64 size;
     if (!IsOldGpu)
@@ -242,7 +206,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
         }
     }
     
-    // Allocate memory with safe sizes for RTX 5090
+    // Allocate memory with safe sizes
     size = effectiveMaxDpCnt * GPU_DP_SIZE + 16;
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.DPs_out, size);
@@ -252,7 +216,6 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
         return false;
     }
 
-    // For RTX 5090, we use a slightly different memory allocation size for kangaroos
     size = KangCnt * 96;
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.Kangs, size);
@@ -286,13 +249,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
         return false;
     }
 
-    // Use a significantly reduced STEP_CNT value for RTX 5090 to limit memory usage
-    int effectiveStepCnt = STEP_CNT;
-    if (!IsOldGpu && deviceProp.major >= 9) {
-        effectiveStepCnt = 128; // Drastically reduced step count for RTX 5090
-    }
-
-    // Allocate JumpsList with the effective STEP_CNT
+    // Use effective STEP_CNT for JumpsList
     size = 2 * (u64)KangCnt * effectiveStepCnt;
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.JumpsList, size);
@@ -302,18 +259,11 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
         return false;
     }
 
-    // For RTX 5090, we need to limit the DP table size
-    int effectiveDpTableMaxCnt = DPTABLE_MAX_CNT;
-    if (!IsOldGpu && deviceProp.major >= 9) {
-        effectiveDpTableMaxCnt = 8; // Significantly reduced from default
-    }
-    
+    // Use much smaller DP table size for RTX 5090
     size = (u64)KangCnt * (16 * effectiveDpTableMaxCnt + sizeof(u32)); 
-    // Add a safety check for excessively large allocations
-    if (size > 2ULL * 1024 * 1024 * 1024) { // If over 2GB
-        printf("Warning: DP table size is very large (%llu GB), reducing to prevent segfault\n", 
-               size / (1024 * 1024 * 1024));
-        size = 2ULL * 1024 * 1024 * 1024; // Limit to 2GB
+    if (rtx5090_mode && size > 256ULL * 1024 * 1024) {
+        printf("RTX 5090 COMPATIBILITY MODE: Limiting DP table size to 256MB\n");
+        size = 256ULL * 1024 * 1024;
     }
     total_mem += size;
     err = cudaMalloc((void**)&Kparams.DPTable, size);
@@ -330,12 +280,6 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
     {
         printf("GPU %d Allocate L1S2 memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
         return false;
-    }
-
-    // For RTX 5090, reduce MD_LEN for better memory management
-    int effectiveMdLen = MD_LEN;
-    if (!IsOldGpu && deviceProp.major >= 9) {
-        effectiveMdLen = 8; // Reduced from default
     }
 
     size = (u64)KangCnt * effectiveMdLen * (2 * 32);
@@ -652,6 +596,13 @@ void RCGpuKang::Execute()
         return;
     }
 
+    // Check if using RTX 5090
+    bool rtx5090_mode = isRTX5090(CudaIndex);
+    
+    if (rtx5090_mode) {
+        printf("RTX 5090 COMPATIBILITY MODE: Using ultra-safe execution path\n");
+    }
+
     if (!Start())
     {
         printf("GPU %d, start failed\n", CudaIndex);
@@ -666,6 +617,11 @@ void RCGpuKang::Execute()
     while (!StopFlag)
     {
         u64 t1 = GetTickCount64();
+        
+        // Added synchronization point for RTX 5090
+        if (rtx5090_mode) {
+            cudaDeviceSynchronize();
+        }
         
         // Use CUDA streams with error checking
         err = cudaMemsetAsync(Kparams.DPs_out, 0, 4, memoryStream);
@@ -696,6 +652,11 @@ void RCGpuKang::Execute()
             break;
         }
         
+        // Added extra sync and safety for RTX 5090
+        if (rtx5090_mode) {
+            cudaDeviceSynchronize();
+        }
+        
         // Call main kernel with error checking
         CallGpuKernelABC(Kparams, computeStream);
         err = cudaGetLastError();
@@ -711,6 +672,11 @@ void RCGpuKang::Execute()
             printf("GPU %d, cudaStreamSynchronize compute stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
             gTotalErrors++;
             break;
+        }
+        
+        // Added for RTX 5090
+        if (rtx5090_mode) {
+            cudaDeviceSynchronize();
         }
         
         // Copy results with error checking
@@ -729,11 +695,15 @@ void RCGpuKang::Execute()
             break;
         }
         
-        if (cnt >= MAX_DP_CNT)
-        {
+        // Limit point count for RTX 5090
+        if (rtx5090_mode && cnt > 256) {
+            printf("RTX 5090 COMPATIBILITY MODE: Limiting points from %d to 256\n", cnt);
+            cnt = 256;
+        } else if (cnt >= MAX_DP_CNT) {
             cnt = MAX_DP_CNT;
             printf("GPU %d, gpu DP buffer overflow, some points lost, increase DP value!\n", CudaIndex);
         }
+        
         u64 pnt_cnt = (u64)KangCnt * STEP_CNT;
 
         if (cnt)
@@ -756,24 +726,21 @@ void RCGpuKang::Execute()
             AddPointsToList(DPs_out, cnt, (u64)KangCnt * STEP_CNT);
         }
 
-        // Debug info
+        // Debug info - non-critical, so continue even if they fail
         err = cudaMemcpyAsync(dbg, Kparams.dbg_buf, 1024, cudaMemcpyDeviceToHost, memoryStream);
         if (err != cudaSuccess) {
             printf("GPU %d, cudaMemcpyAsync dbg failed: %s\n", CudaIndex, cudaGetErrorString(err));
-            // Not critical, continue
         }
 
         u32 lcnt;
         err = cudaMemcpyAsync(&lcnt, Kparams.LoopedKangs, 4, cudaMemcpyDeviceToHost, memoryStream);
         if (err != cudaSuccess) {
             printf("GPU %d, cudaMemcpyAsync lcnt failed: %s\n", CudaIndex, cudaGetErrorString(err));
-            // Not critical, continue
         }
         
         err = cudaStreamSynchronize(memoryStream);
         if (err != cudaSuccess) {
             printf("GPU %d, cudaStreamSynchronize memory stream failed: %s\n", CudaIndex, cudaGetErrorString(err));
-            // Not critical, continue
         }
         
         // Calculate and display speed statistics
@@ -800,6 +767,15 @@ void RCGpuKang::Execute()
         }
         iter++;
 #endif
+
+        // For RTX 5090, add a small delay to prevent overloading
+        if (rtx5090_mode) {
+            // 10ms delay for thermal and resource management
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 10 * 1000 * 1000; // 10 milliseconds
+            nanosleep(&ts, NULL);
+        }
     }
 
     Release();
