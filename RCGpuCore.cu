@@ -11,7 +11,7 @@
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
 
-#define BLOCK_CNT	gridDim.x
+#define BLOCK_CNT 80   // Adjusted for RTX 5090
 #define BLOCK_X		blockIdx.x
 #define THREAD_X	threadIdx.x
 
@@ -53,7 +53,7 @@ __global__ void KernelA(const TKparams Kparams)
 		i += BLOCK_SIZE;
     }
 
-    __syncthreads(); 
+    __syncwarp(); 
 
 	__align__(16) u64 x[4], y[4], tmp[4], tmp2[4];
 	u64 dp_mask64 = ~((1ull << (64 - Kparams.DP)) - 1);
@@ -237,7 +237,7 @@ __global__ void KernelA(const TKparams Kparams)
 		i += BLOCK_SIZE;
 	}
 
-	__syncthreads();
+	__syncwarp();
 
 	__align__(16) u64 inverse[5];
 	__align__(16) u64 x[4], y[4], tmp[4], tmp2[4];
@@ -592,7 +592,7 @@ __global__ void KernelB(const TKparams Kparams)
 
 	u32* jlist0 = (u32*)(Kparams.JumpsList + (u64)BLOCK_X * STEP_CNT * PNT_GROUP_CNT * BLOCK_SIZE / 4);
 
-	__syncthreads();
+	__syncwarp();
 
 	u64 RegsA[MD_LEN], RegsB[MD_LEN];
 
@@ -682,7 +682,7 @@ __global__ void KernelC(const TKparams Kparams)
 		i += BLOCK_SIZE;
 	}
 
-	__syncthreads();
+	__syncwarp();
 
 	while (1)
 	{
@@ -889,14 +889,14 @@ __global__ void KernelGen(const TKparams Kparams)
 
 void CallGpuKernelABC(TKparams Kparams)
 {
-	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size >>> (Kparams);
-	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size >>> (Kparams);
-	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size >>> (Kparams);
+	KernelA <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelA_LDS_Size >>> (Kparams);
+	KernelB <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelB_LDS_Size >>> (Kparams);
+	KernelC <<< BLOCK_CNT, BLOCK_SIZE, Kparams.KernelC_LDS_Size >>> (Kparams);
 }
 
 void CallGpuKernelGen(TKparams Kparams)
 {
-	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0 >> > (Kparams);
+	KernelGen <<< BLOCK_CNT, BLOCK_SIZE, 0 >>> (Kparams);
 }
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)

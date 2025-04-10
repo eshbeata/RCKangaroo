@@ -47,6 +47,7 @@ bool IsBench;
 u32 gDP;
 u32 gRange;
 EcInt gStart;
+EcInt gEnd;
 bool gStartSet;
 EcPoint gPubKey;
 u8 gGPUs_Mask[MAX_GPU_CNT];
@@ -525,6 +526,15 @@ bool ParseCommandLine(int argc, char* argv[])
 				}
 				gGPUs_Mask[gpus[i] - '0'] = 1;
 			}
+		}
+		else if (strcmp(argument, "-end") == 0)
+		{
+			if (!gEnd.SetHexStr(argv[ci]))
+			{
+				printf("error: invalid value for -end option\r\n");
+				return false;
+			}
+			ci++;
 		}
 		else
 		if (strcmp(argument, "-dp") == 0)
