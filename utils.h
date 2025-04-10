@@ -30,7 +30,9 @@
 	#include <math.h>
 	#include <pthread.h>
 	#include <unistd.h>
+	#ifdef __x86_64__
 	#include <x86intrin.h>
+	#endif
 	#define DWORD           u32
 	#define CSHANDLER		pthread_mutex_t
 	#define INIT_CS(cs)		{pthread_mutexattr_t attr; pthread_mutexattr_init(&attr); pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE); pthread_mutex_init((cs), &attr);}
