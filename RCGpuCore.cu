@@ -30,11 +30,17 @@ extern __shared__ u64 LDS[];
     #define BLOCK_SIZE	1536  // Optimized thread count for RTX 5090
     #define PNT_GROUP_CNT 6    // Optimized for RTX 5090 memory architecture
     #define STEP_CNT 96        // Increased to better utilize RTX 5090 capabilities
+    #ifndef MAX_DP_CNT
     #define MAX_DP_CNT 65536   // Doubled for RTX 5090 memory capacity
+    #endif
     
     // Enhanced boundary checking for RTX 5090 to prevent segmentation faults
     #define CHECK_BOUNDS(idx, max) ((idx) < (max))
     #define SAFE_LOAD(dst, ptr, idx, max) { if (CHECK_BOUNDS(idx, max)) { dst = ptr[idx]; } }
+    
+    #if defined(__CUDA_ARCH__)
+    #define printf(fmt, ...) // Disable printf in device code
+    #endif
     
     // Enhanced memory optimizations for RTX 5090
     #define USE_LARGE_L2_CACHE
