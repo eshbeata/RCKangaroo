@@ -48,7 +48,7 @@ Then you can restart software with same parameters to see less K in benchmark mo
 
 <b>Some notes:</b>
 
-Fastest ECDLP solvers will always use SOTA/SOTA+ method, as it's 1.4/1.5 times faster and requires less memory for DPs compared to the best 3-way kangaroos with K=1.6. 
+Fastest ECDLP solvers will always use SOTA method, as it's 1.4 times faster and requires less memory for DPs compared to the best 3-way kangaroos with K=1.6. 
 Even if you already have a faster implementation of kangaroo jumps, incorporating SOTA method will improve it further. 
 While adding the necessary loop-handling code will cause you to lose about 5–15% of your current speed, the SOTA method itself will provide a 40% performance increase. 
 Overall, this translates to roughly a 25% net improvement, which should not be ignored if your goal is to build a truly fast solver. 
