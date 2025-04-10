@@ -25,6 +25,44 @@ extern "C" {
 #define VALIDATE_MEMORY(ptr, msg) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return; }
 #define VALIDATE_MEMORY_CUDA(ptr, msg, err_ret) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return err_ret; }
 
+// Check for RTX 5090 and adjust settings accordingly
+#ifdef RTX5090_MODE
+    // Include RTX 5090 optimized settings if available
+    #include "rtx5090_settings.h"
+    
+    // Use RTX 5090 specific parameters
+    #ifndef RTX5090_BLOCK_SIZE
+        #define RTX5090_BLOCK_SIZE 256
+    #endif
+    
+    #ifndef RTX5090_PNT_GROUP_CNT
+        #define RTX5090_PNT_GROUP_CNT 8  // Further reduced for extreme safety
+    #endif
+    
+    #ifndef RTX5090_STEP_CNT
+        #define RTX5090_STEP_CNT 64
+    #endif
+    
+    // Override default settings with RTX 5090 specific ones
+    #undef BLOCK_SIZE
+    #undef PNT_GROUP_CNT
+    #undef STEP_CNT
+    
+    #define BLOCK_SIZE RTX5090_BLOCK_SIZE
+    #define PNT_GROUP_CNT RTX5090_PNT_GROUP_CNT
+    #define STEP_CNT RTX5090_STEP_CNT
+    
+    // Add safe memory access macros specifically for RTX 5090
+    #define SAFE_MEMORY_ACCESS
+    #define CHECK_BOUNDS(idx, max) ((idx) < (max))
+    #define SAFE_LOAD(dst, ptr, idx, max) { if (CHECK_BOUNDS(idx, max)) { dst = ptr[idx]; } }
+    
+    // Disable printf in device code
+    #if defined(__CUDA_ARCH__)
+    #define printf(fmt, ...) 
+    #endif
+#endif
+
 //imp2 table points for KernelA
 __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
