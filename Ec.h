@@ -60,6 +60,13 @@ public:
 	EcInt y;
 };
 
+// Add the missing EcJMP struct definition
+struct EcJMP
+{
+    EcPoint p;
+    EcInt dist;
+};
+
 class Ec
 {
 public:

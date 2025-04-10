@@ -12,12 +12,11 @@ NVCCFLAGS := -O3 \
     --use_fast_math \
     --threads 0 \
     --gpu-architecture=sm_90 \
-    -Xptxas=-v,-O3 \
-    -Xcompiler=-O3,-march=native \
-    --default-stream per-thread \
+    -Xptxas="-v,-O3" \
+    -Xcompiler="-O3,-march=native" \
+    --default-stream=per-thread \
     --relocatable-device-code=true \
-    --maxrregcount=64 \
-    --ptxas-options=-v,-O3
+    --maxrregcount=64
 
 LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -pthread
 

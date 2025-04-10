@@ -35,6 +35,28 @@ print_warning() {
     echo -e "${YELLOW}! $1${NC}"
 }
 
+# Version comparison function that doesn't require bc
+version_greater_equal() {
+    local IFS=.
+    local i ver1=($1) ver2=($2)
+    # Fill empty fields with zeros
+    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
+        ver1[i]=0
+    done
+    for ((i=0; i<${#ver1[@]}; i++)); do
+        if [[ -z ${ver2[i]} ]]; then
+            ver2[i]=0
+        fi
+        if ((10#${ver1[i]} > 10#${ver2[i]})); then
+            return 0
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]})); then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Function to detect CUDA version
 detect_cuda() {
     print_header "DETECTING CUDA INSTALLATION"
@@ -44,8 +66,8 @@ detect_cuda() {
         CUDA_PATH=$(which nvcc | rev | cut -d'/' -f3- | rev)
         print_success "CUDA detected: Version $CUDA_VERSION at $CUDA_PATH"
         
-        # Check if CUDA version is sufficient for RTX 5090
-        if [ "$(echo "$CUDA_VERSION >= 12.0" | bc)" -eq 1 ]; then
+        # Check if CUDA version is sufficient for RTX 5090 without using bc
+        if version_greater_equal "$CUDA_VERSION" "12.0"; then
             print_success "CUDA version is sufficient for RTX 5090"
         else
             print_warning "CUDA version may be too old for RTX 5090. Consider upgrading to CUDA 12.0 or newer."
