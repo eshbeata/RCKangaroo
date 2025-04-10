@@ -21,6 +21,19 @@ extern "C" {
     void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
 }
 
+// Add missing constants for RTX 5090 compatibility
+#ifndef JMP_CNT
+#define JMP_CNT 512
+#endif
+
+#ifndef DPTABLE_MAX_CNT
+#define DPTABLE_MAX_CNT 16
+#endif
+
+#ifndef MD_LEN
+#define MD_LEN 16
+#endif
+
 // Add memory validation before access
 #define VALIDATE_MEMORY(ptr, msg) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return; }
 #define VALIDATE_MEMORY_CUDA(ptr, msg, err_ret) if ((ptr) == NULL) { printf("ERROR: %s is NULL\n", msg); return err_ret; }
