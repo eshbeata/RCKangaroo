@@ -11,21 +11,25 @@
 
 #else
 
+// Finds the highest set bit in the 64-bit mask 'msk' and writes its zero-based index to 'index'
 void _BitScanReverse64(u32* index, u64 msk) 
 {
     *index = 63 - __builtin_clzll(msk); 
 }
 
+// Finds the lowest set bit in the 64-bit mask 'msk' and writes its zero-based index to 'index'
 void _BitScanForward64(u32* index, u64 msk) 
 {
     *index = __builtin_ffsll(msk) - 1; 
 }
 
+// Multiplies two 64-bit integers producing a 128-bit result; returns low 64 bits and stores high 64 bits in 'hi'
 u64 _umul128(u64 m1, u64 m2, u64* hi) 
 { 
     uint128_t ab = (uint128_t)m1 * m2; *hi = (u64)(ab >> 64); return (u64)ab; 
 }
 
+// Shifts the combined 128-bit value (HighPart:LowPart) right by 'Shift' bits, returning the low 64 bits of the result
 u64 __shiftright128 (u64 LowPart, u64 HighPart, u8 Shift)
 {
    u64 ret;
@@ -36,6 +40,7 @@ u64 __shiftright128 (u64 LowPart, u64 HighPart, u8 Shift)
    return ret;
 }
 
+// Shifts the combined 128-bit value (HighPart:LowPart) left by 'Shift' bits, returning the high 64 bits of the result
 u64 __shiftleft128 (u64 LowPart, u64 HighPart, u8 Shift)
 {
    u64 ret;
@@ -46,6 +51,7 @@ u64 __shiftleft128 (u64 LowPart, u64 HighPart, u8 Shift)
    return ret;
 }   
 
+// Returns the current time in milliseconds using a monotonic clock source
 u64 GetTickCount64()
 {
 	struct timespec ts;
@@ -274,32 +280,44 @@ bool TFastBase::LoadFromFile(char* fn)
 
 bool TFastBase::SaveToFile(char* fn)
 {
-	FILE* fp = fopen(fn, "wb");
-	if (!fp)
-		return false;
-	if (fwrite(Header, 1, sizeof(Header), fp) != sizeof(Header))
-	{
-		fclose(fp);
-		return false;
-	}
-	for (int i = 0; i < 256; i++)
-		for (int j = 0; j < 256; j++)
-			for (int k = 0; k < 256; k++)
-			{
-				TListRec* list = &lists[i][j][k];
-				fwrite(&list->cnt, 1, 2, fp);
-				for (int m = 0; m < list->cnt; m++)
-				{
-					void* ptr = mps[i].GetRecPtr(list->data[m]);
-					if (fwrite(ptr, 1, DB_REC_LEN, fp) != DB_REC_LEN)
-					{
-						fclose(fp);
-						return false;
-					}
-				}
-			}
-	fclose(fp);
-	return true;
+    FILE* fp = fopen(fn, "wb");
+    if (!fp)
+        return false;
+    // use a large output buffer to batch writes
+    setvbuf(fp, nullptr, _IOFBF, 1 << 20); // 1MB buffer
+    if (fwrite(Header, 1, sizeof(Header), fp) != sizeof(Header))
+    {
+        fclose(fp);
+        return false;
+    }
+    for (int i = 0; i < 256; i++)
+        for (int j = 0; j < 256; j++)
+            for (int k = 0; k < 256; k++)
+            {
+                TListRec* list = &lists[i][j][k];
+                fwrite(&list->cnt, 1, 2, fp);
+                // write all records for this list in one contiguous write if possible
+                if (list->cnt > 0)
+                {
+                    // allocate temporary buffer for this bucket
+                    size_t total = list->cnt * DB_REC_LEN;
+                    u8* buf = (u8*)malloc(total);
+                    for (int m = 0; m < list->cnt; m++)
+                    {
+                        void* ptr = mps[i].GetRecPtr(list->data[m]);
+                        memcpy(buf + (size_t)m * DB_REC_LEN, ptr, DB_REC_LEN);
+                    }
+                    if (fwrite(buf, 1, total, fp) != total)
+                    {
+                        free(buf);
+                        fclose(fp);
+                        return false;
+                    }
+                    free(buf);
+                }
+            }
+    fclose(fp);
+    return true;
 }
 
 bool IsFileExist(char* fn)
